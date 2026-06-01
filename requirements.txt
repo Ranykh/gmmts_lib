@@ -1,0 +1,36 @@
+# Core dependencies
+torch>=2.0.0
+numpy>=1.23.0
+pandas>=2.0.0
+scipy>=1.10.0
+scikit-learn>=1.2.0
+
+# Transformer and NLP
+transformers>=4.40.0
+tokenizers>=0.19.0
+sentencepiece>=0.2.0
+sacremoses>=0.1.0
+
+# Attention mechanisms
+einops>=0.8.0
+axial_positional_embedding>=0.3.0
+local-attention>=1.11.0
+reformer-pytorch>=1.4.4
+product-key-memory>=0.2.11
+
+# Data handling
+sktime>=0.36.0
+
+# Utilities
+tqdm>=4.67.0
+PyYAML>=6.0.0
+python-dateutil>=2.9.0
+pytz>=2025.1
+
+# Visualization
+matplotlib>=3.10.0
+
+# Optional: For specific features
+# langchain>=0.3.0  # If using LLM integrations
+# openai>=1.0.0  # If using OpenAI models
+
