@@ -1,6 +1,12 @@
-import argparse
 import os
 import sys
+
+mm_tsflib = os.environ.get("MM_TSFLIB_PATH")
+if not mm_tsflib:
+    raise RuntimeError("Set MM_TSFLIB_PATH to your MM-TSFlib clone")
+sys.path.insert(0, os.path.abspath(mm_tsflib))
+
+import argparse
 import torch
 import random
 import numpy as np
@@ -8,10 +14,6 @@ import pandas as pd
 import re
 from os.path import exists, join
 
-# Note: MM_TSFLIB_PATH environment variable is only needed to point to data files
-# All code dependencies are now included in GMM-TS
-
-# Now import from gmm_ts and MM-TSFlib
 from gmm_ts.exp.exp_online_gating_long_term_forecasting import Exp_Online_Gating_Long_Term_Forecast
 from gmm_ts.utils.print_args import print_gating_args
 

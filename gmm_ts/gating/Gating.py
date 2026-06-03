@@ -1,9 +1,8 @@
 import torch.nn as nn
-#from gmm_ts.layers.Transformer_EncDec import Encoder, EncoderLayer
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
 from torch.nn import LayerNorm
 import torch
-from gmm_ts.layers.Embed import DataEmbedding
+from layers.Embed import DataEmbedding
 import torch.nn.functional as F
 
 class GatingNet(nn.Module):

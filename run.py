@@ -1,6 +1,12 @@
-import argparse
 import os
 import sys
+
+mm_tsflib = os.environ.get("MM_TSFLIB_PATH")
+if not mm_tsflib:
+    raise RuntimeError("Set MM_TSFLIB_PATH to your MM-TSFlib clone")
+sys.path.insert(0, os.path.abspath(mm_tsflib))
+
+import argparse
 import torch
 import random
 import numpy as np
@@ -8,12 +14,10 @@ import pandas as pd
 import re
 from os.path import exists, join
 
-# GMM-TS imports - all code is now standalone!
+# GMM-TS imports expert models and layers from MM-TSFlib via MM_TSFLIB_PATH
 from gmm_ts.exp.exp_long_term_forecasting import Exp_Long_Term_Forecast
 from gmm_ts.utils.print_args import print_args
 
-# Note: MM_TSFLIB_PATH environment variable is only needed to point to data files
-# All code dependencies are now included in GMM-TS
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 if __name__ == '__main__':
     

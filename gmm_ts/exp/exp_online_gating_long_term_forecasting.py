@@ -21,10 +21,9 @@ import pandas as pd
 from datetime import datetime
 import re
 from gmm_ts.gating.Gating import GatingNet
-# Import all models from gmm_ts (modified to return latents)
-from gmm_ts.models import (Autoformer, Transformer, TimesNet, Nonstationary_Transformer, DLinear, FEDformer,
+from models import (Autoformer, Transformer, TimesNet, Nonstationary_Transformer, DLinear, FEDformer,
     Informer, LightTS, Reformer, ETSformer, Pyraformer, PatchTST, MICN, Crossformer, FiLM, iTransformer,
-    Koopa, TiDE, FreTS, TimeMixer, TSMixer, SegRNN)    
+    Koopa, TiDE, FreTS, TimeMixer, TSMixer, SegRNN)
 def norm(input_emb):
     input_emb=input_emb- input_emb.mean(1, keepdim=True).detach()
     input_emb=input_emb/torch.sqrt(
