@@ -5,6 +5,10 @@ results_monthly
 results_weekly
 results_daily
 result_*
+all_experts_config.csv
+
+# Accidental local paths
+$/
 
 # Checkpoints and generated datasets
 checkpoints/

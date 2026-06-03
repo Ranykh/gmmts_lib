@@ -44,7 +44,7 @@ do
           --pool_type "avg" \
           --save_name "results_weekly" \
           --llm_model $model_name  \
-          --huggingface_token 'NA'\
+          --huggingface_token "${HUGGINGFACE_TOKEN:-}"\
           --use_fullmodel $use_fullmodel
       done
     done

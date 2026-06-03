@@ -51,9 +51,9 @@ do
           --type_tag "#F#" \
           --text_len 4 \
           --pool_type "avg" \
-          --save_name "results_weekly" \
+          --save_name "results_daily" \
           --llm_model $llm_model \
-          --huggingface_token 'NA'\
+          --huggingface_token "${HUGGINGFACE_TOKEN:-}"\
           --use_fullmodel $use_fullmodel \
           --agg_type $agg_type
       done

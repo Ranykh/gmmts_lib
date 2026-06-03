@@ -12,4 +12,6 @@ Installing this project (for example, via `pip install -r requirements.txt` or `
 
 Pre-trained model weights may be downloaded at runtime when using LLM-based experts (for example, BERT, GPT-2). Those artifacts are subject to the license terms published by their respective providers.
 
-Review each dependency's license before use. License texts are typically available in your Python environment under `site-packages` or from the upstream project repositories.
+DTW utilities in `gmm_ts/utils/dtw.py` are adapted from the [Time-Series-Library](https://github.com/thuml/Time-Series-Library) project.
+
+Review each dependency's license before use.

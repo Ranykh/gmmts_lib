@@ -80,7 +80,7 @@ do
           --pool_type "avg" \
           --save_name "results_monthly" \
           --llm_model $llm_model \
-          --huggingface_token 'NA'\
+          --huggingface_token "${HUGGINGFACE_TOKEN:-}"\
           --use_fullmodel $use_fullmodel \
           --agg_type $agg_type
       done

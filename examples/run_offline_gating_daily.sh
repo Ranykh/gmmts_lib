@@ -20,7 +20,7 @@ for seed in "${seeds[@]}"
               do
               for eip in "${input_types[@]}"
               do
-                  echo "Running domain $domain with $tsfn_model_name - $tsft_model_name pred_len $pred_len agg $agg_type input type $input_type seed $seed"
+                  echo "Running domain $domain with $tsfn_model_name - $tsft_model_name pred_len $pred_len agg $agg_type input type $eip seed $seed"
                   python -u run_offline_gating.py \
               --task_name mm_long_term_forecast \
               --pred_len $pred_len \

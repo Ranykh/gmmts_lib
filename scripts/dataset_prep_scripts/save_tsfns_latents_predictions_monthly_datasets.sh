@@ -45,7 +45,7 @@ do
           --pool_type "avg" \
           --save_name "results_monthly" \
           --llm_model BERT \
-          --huggingface_token 'NA'\
+          --huggingface_token "${HUGGINGFACE_TOKEN:-}"\
           --use_fullmodel $use_fullmodel
       done
     done

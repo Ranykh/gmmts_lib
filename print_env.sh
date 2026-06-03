@@ -18,65 +18,43 @@ fi
 echo
 
 echo "***OS Information***"
-cat /etc/*-release
+if [ -f /etc/os-release ]; then
+  cat /etc/os-release
+elif [ -f /etc/system-version ]; then
+  cat /etc/system-version
+fi
 uname -a
 echo
 
 echo "***GPU Information***"
-nvidia-smi
-echo
-
-echo "***CPU***"
-lscpu
-echo
-
-echo "***CMake***"
-which cmake && cmake --version
-echo
-
-echo "***g++***"
-which g++ && g++ --version
-echo
-
-echo "***nvcc***"
-which nvcc && nvcc --version
+if command -v nvidia-smi >/dev/null 2>&1; then
+  nvidia-smi
+else
+  echo "nvidia-smi not found"
+fi
 echo
 
 echo "***Python***"
 which python && python -c "import sys; print('Python {0}.{1}.{2}'.format(sys.version_info[0], sys.version_info[1], sys.version_info[2]))"
+python -c "import torch; print('PyTorch', torch.__version__, 'CUDA available:', torch.cuda.is_available())" 2>/dev/null || echo "PyTorch not installed"
 echo
 
 echo "***Environment Variables***"
-
-printf '%-32s: %s\n' PATH $PATH
-
-printf '%-32s: %s\n' LD_LIBRARY_PATH $LD_LIBRARY_PATH
-
-printf '%-32s: %s\n' NUMBAPRO_NVVM $NUMBAPRO_NVVM
-
-printf '%-32s: %s\n' NUMBAPRO_LIBDEVICE $NUMBAPRO_LIBDEVICE
-
-printf '%-32s: %s\n' CONDA_PREFIX $CONDA_PREFIX
-
-printf '%-32s: %s\n' PYTHON_PATH $PYTHON_PATH
-
+printf '%-32s: %s\n' MM_TSFLIB_PATH "${MM_TSFLIB_PATH:-<not set>}"
+printf '%-32s: %s\n' CUDA_VISIBLE_DEVICES "${CUDA_VISIBLE_DEVICES:-<not set>}"
+printf '%-32s: %s\n' CONDA_PREFIX "${CONDA_PREFIX:-<not set>}"
 echo
 
-
-# Print conda packages if conda exists
 if type "conda" &> /dev/null; then
 echo '***conda packages***'
 which conda && conda list
 echo
-# Print pip packages if pip exists
 elif type "pip" &> /dev/null; then
-echo "conda not found"
 echo "***pip packages***"
 which pip && pip list
 echo
 else
-echo "conda not found"
-echo "pip not found"
+echo "Neither conda nor pip found"
 fi
 }
 
