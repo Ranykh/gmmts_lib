@@ -1,0 +1,28 @@
+# Run artifacts
+*_online_gating_results/
+*_offline_gating_results/
+results_monthly
+results_weekly
+results_daily
+result_*
+
+# Checkpoints and generated datasets
+checkpoints/
+gating_checkpoints/
+online_gating_checkpoints/
+train_gating_dataset/
+val_gating_dataset/
+test_gating_dataset/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

@@ -1,6 +1,0 @@
-Climate_long_term_forecast_aggdirect_eiplatent_pl12_dm256_nh8_el2_df2048_0_tsfn-expertsInformer_tsft-expertsGPT2  
-mse:1.0937975645065308, mae:0.8146956562995911, rmse:1.045847773551941, mape:2.4331750869750977, mspe:60.71073913574219
-
-Algriculture_long_term_forecast_aggdirect_eiplatent_pl6_dm256_nh8_el2_df2048_0_tsfn-expertsInformer_tsft-expertsGPT2  
-mse:0.35317695140838623, mae:0.4717184007167816, rmse:0.5942869186401367, mape:0.20192694664001465, mspe:0.05661916732788086
-
