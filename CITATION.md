@@ -9,7 +9,7 @@ If you use GMM-TS in a publication, please use citations in the following format
   title = {GMM-TS: Gating-based Multimodal Time Series Forecasting},
   author = {Kathy Razmadze and Yoli Shavit},
   year = {2026},
-  url = {https://github.com/kathyrazNVDA/GMMTS},
+  url = {https://github.com/NVIDIA/gmmts},
 }
 ```
 

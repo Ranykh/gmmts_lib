@@ -21,8 +21,8 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for additional information.
 
 ```bash
 # Clone the repository
-git clone https://github.com/kathyrazNVDA/GMMTS.git
-cd GMMTS
+git clone https://github.com/NVIDIA/gmmts.git
+cd gmmts
 
 # Create a virtual environment and install dependencies
 python -m venv .venv
@@ -102,8 +102,8 @@ Benchmark results depend on the expert models, domain, and prediction horizon. U
 - Development quickstart (build/test):
 
 ```bash
-git clone https://github.com/kathyrazNVDA/GMMTS.git
-cd GMMTS
+git clone https://github.com/NVIDIA/gmmts.git
+cd gmmts
 pip install -r requirements.txt
 pip install -e ".[dev]"
 ./print_env.sh
@@ -123,7 +123,7 @@ pip install -e ".[dev]"
 ## Support
 
 - Level: Experimental
-- How to get help: [GitHub Issues](https://github.com/kathyrazNVDA/GMMTS/issues)
+- How to get help: [GitHub Issues](https://github.com/NVIDIA/gmmts/issues)
 
 # Community
 

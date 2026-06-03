@@ -3,7 +3,7 @@
 If you are interested in contributing to GMMTS, your contributions will fall
 into three categories:
 1. You want to report a bug, feature request, or documentation issue
-    - File an [issue](https://github.com/kathyrazNVDA/GMMTS/issues/new/choose)
+    - File an [issue](https://github.com/NVIDIA/gmmts/issues/new/choose)
     describing what you encountered or what you want to see changed.
     - Please run and paste the output of the `print_env.sh` script while
     reporting a bug to gather and report relevant environment details.
@@ -23,13 +23,13 @@ into three categories:
 
 ### Your first issue
 
-1. Read the project's [README.md](https://github.com/kathyrazNVDA/GMMTS/blob/main/README.md)
+1. Read the project's [README.md](https://github.com/NVIDIA/gmmts/blob/main/README.md)
     to learn how to setup the development environment.
-2. Find an issue to work on. Look for issues labeled [good first issue](https://github.com/kathyrazNVDA/GMMTS/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
-    or [help wanted](https://github.com/kathyrazNVDA/GMMTS/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22).
+2. Find an issue to work on. Look for issues labeled [good first issue](https://github.com/NVIDIA/gmmts/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+    or [help wanted](https://github.com/NVIDIA/gmmts/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22).
 3. Comment on the issue saying you are going to work on it.
 4. Code! Make sure to update or add tests where applicable.
-5. When done, [create your pull request](https://github.com/kathyrazNVDA/GMMTS/compare).
+5. When done, [create your pull request](https://github.com/NVIDIA/gmmts/compare).
 6. Verify that CI passes all [status checks](https://help.github.com/articles/about-status-checks/), or fix if needed.
 7. Wait for other developers to review your code and update code as needed.
 8. Once reviewed and approved, a maintainer will merge your pull request.
