@@ -11,6 +11,12 @@ GMM-TS (Gating-based Multimodal Time Series Forecasting) learns a gating network
 
 The project is built on [MM-TSFlib](https://github.com/AdityaLab/MM-TSFlib) and includes a standalone `gmm_ts` package with gating layers, experiment runners, and example scripts for daily, weekly, and monthly forecasting tasks.
 
+## Third-Party Software
+
+This project will download and install additional third-party open source software projects. Review the license terms of these open source projects before use.
+
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for additional information.
+
 # Getting Started
 
 ```bash
