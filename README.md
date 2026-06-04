@@ -74,7 +74,7 @@ See the `examples/` directory for batch experiment scripts covering daily, weekl
 # Requirements
 
 - OS/Arch: Linux recommended; macOS supported for development (GPU optional)
-- Python: 3.8+
+- Python: 3.10+ (required by updated `scipy`, `scikit-learn`, and `torch` pins)
 - Runtime: PyTorch 2.0+
 - GPU/Drivers (recommended): CUDA-capable GPU with compatible NVIDIA driver
 - **[MM-TSFlib](https://github.com/AdityaLab/MM-TSFlib)** (required): clone and set `MM_TSFLIB_PATH` — provides expert `models/`, `layers/`, and `data/`
