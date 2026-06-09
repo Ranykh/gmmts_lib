@@ -11,7 +11,7 @@ setup(
     description="Gating-based Multimodal Time Series Forecasting",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/NVIDIA/gmmts",
+    url="https://github.com/NVIDIA/gmmts_lib",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 3 - Alpha",

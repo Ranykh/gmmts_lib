@@ -21,15 +21,15 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for additional information.
 
 ```bash
 # Clone GMM-TS
-git clone https://github.com/NVIDIA/gmmts.git
-cd gmmts
+git clone https://github.com/NVIDIA/gmmts_lib.git
+cd gmmts_lib
 
 # Clone MM-TSFlib (required — provides models, layers, and data)
 git clone https://github.com/AdityaLab/MM-TSFlib.git
 cd MM-TSFlib
 git checkout e789ce78c9bafd8e3ba0d8850f9ad2becbe83548
 pip install -r environment.txt
-cd ../gmmts
+cd ../gmmts_lib
 
 # Create a virtual environment and install GMM-TS
 python -m venv .venv
@@ -129,8 +129,8 @@ Benchmark results depend on the expert models, domain, and prediction horizon. U
 - Development quickstart (build/test):
 
 ```bash
-git clone https://github.com/NVIDIA/gmmts.git
-cd gmmts
+git clone https://github.com/NVIDIA/gmmts_lib.git
+cd gmmts_lib
 # Clone and pin MM-TSFlib, then:
 export MM_TSFLIB_PATH=/path/to/MM-TSFlib
 pip install -r requirements.txt
@@ -153,7 +153,7 @@ pip install -e ".[dev]"
 ## Support
 
 - Level: Experimental
-- How to get help: [GitHub Issues](https://github.com/NVIDIA/gmmts/issues)
+- How to get help: [GitHub Issues](https://github.com/NVIDIA/gmmts_lib/issues)
 
 # Community
 
