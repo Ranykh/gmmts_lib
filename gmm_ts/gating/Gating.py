@@ -4,6 +4,10 @@ from torch.nn import LayerNorm
 import torch
 from layers.Embed import DataEmbedding
 import torch.nn.functional as F
+from gmm_ts.gating.inverse_variance import (
+    inverse_variance_weights,
+    calibrated_inverse_variance_weights,
+)
 
 class GatingNet(nn.Module):
     """
@@ -81,7 +85,15 @@ class GatingNet(nn.Module):
                 nn.Linear(config.gating_d_model, config.gating_d_model // 2),
                 nn.ReLU(),
                 nn.Linear(config.gating_d_model // 2, config.pred_len)
-            ) 
+            )
+        elif config.agg_type == "inv_var":
+            # Inverse-variance gate: weights are derived directly from each
+            # expert's predictive variance -- there is no learned MLP head.
+            # `inv_var_norm` selects the scale-handling strategy:
+            #   "none"         -> plain 1/sigma^2 softmax (fine for same-scale experts)
+            #   "per_modality" -> standardize log-variance within each modality first
+            #                     (handles the text-vs-numeric variance-scale gap)
+            self.inv_var_norm = getattr(config, "inv_var_norm", "none")
         else:
             raise ValueError(f"Unknown aggregation type: {config.agg_type}")
         
@@ -89,6 +101,47 @@ class GatingNet(nn.Module):
         self.softmax = nn.Softmax(dim=1)
 
     # TODO implement the forward pass
+
+    def _forward_inv_var(self, data: dict, return_w=False):
+        """Inverse-variance gating forward pass.
+
+        Consumes, for each expert ``e`` in ``self.expert_config``:
+            - ``e + "_pred_y"``  : expert prediction, shape (B, pred_len, 1)
+            - ``e + "_sigma2"``  : expert predictive variance, shape (B, pred_len[, 1])
+        The expert's modality is inferred from which latent key is present:
+        ``e + "_h_t"`` marks a textual expert, otherwise it is treated as numerical.
+
+        Args:
+            data (dict): gating inputs (see above).
+            return_w (bool): also return the per-expert gating weights.
+
+        Returns:
+            torch.Tensor of shape (B, pred_len, 1); or (y_pred, w) if return_w.
+        """
+        experts_y_pred, sigma2_list, modality_ids = [], [], []
+        for e in self.expert_config.keys():
+            experts_y_pred.append(data[e + "_pred_y"])
+            s2 = data[e + "_sigma2"]
+            if s2.dim() == 3:                      # (B, pred_len, 1) -> (B, pred_len)
+                s2 = s2.squeeze(-1)
+            sigma2_list.append(s2[:, :self.pred_len])
+            # textual expert if it exposes a text latent and no numerical latent
+            is_text = (e + "_h_t") in data and (e + "_h_n") not in data
+            modality_ids.append(1 if is_text else 0)
+
+        experts_y_pred = torch.stack(experts_y_pred, dim=1)  # B x |E| x pred_len x 1
+        sigma2 = torch.stack(sigma2_list, dim=1)             # B x |E| x pred_len
+
+        if getattr(self, "inv_var_norm", "none") == "per_modality":
+            w = calibrated_inverse_variance_weights(sigma2, modality_ids)
+        else:
+            w = inverse_variance_weights(sigma2)
+
+        y_pred = self.agg_outputs(experts_y_pred, w)         # B x pred_len
+        y_pred = y_pred.unsqueeze(-1)                         # B x pred_len x 1
+        if return_w:
+            return y_pred, w
+        return y_pred
 
     def agg_outputs(self, experts_y_pred, w):
         """
@@ -119,7 +172,12 @@ class GatingNet(nn.Module):
         Returns:
             torch.Tensor: Output tensor of shape (batch_size, out_features).
         """
-        # prepare the raw input time series token 
+        # Inverse-variance gating is a separate, latent-free path: the weights
+        # come from the experts' predictive variances, not the transformer head.
+        if self.agg_type == "inv_var":
+            return self._forward_inv_var(data, return_w)
+
+        # prepare the raw input time series token
         x = data["x_n"] # raw input time series
         x_enc = self.input_embedding(x, None) 
         x_token = F.adaptive_avg_pool1d(x_enc.transpose(1, 2), 1).squeeze(2)

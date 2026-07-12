@@ -397,18 +397,25 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
         self.gating_module = GatingNet(args, self.experiment_experts_config).to(self.device)
         
 
-    def prepare_data_for_gating(self, batch_x, y_pred_by_tsfn, 
-                                latent_num_emb, y_pred_by_tsft, latent_text_emb):
+    def prepare_data_for_gating(self, batch_x, y_pred_by_tsfn,
+                                latent_num_emb, y_pred_by_tsft, latent_text_emb,
+                                sigma2_by_tsfn=None, sigma2_by_tsft=None):
         latent_text_emb = torch.nn.functional.adaptive_avg_pool1d(latent_text_emb.transpose(1,2), 1).squeeze(2)
         data = {
                   "x_n": batch_x,
                   self.args.llm_model + "_pred_y": y_pred_by_tsft,
                   self.args.llm_model + "_h_t": latent_text_emb.reshape(latent_text_emb.shape[0], -1)
         }
+        # Optional per-expert predictive variance for agg_type="inv_var".
+        # Backward-compatible: when experts do not emit variance these stay absent.
+        if sigma2_by_tsft is not None:
+            data[self.args.llm_model + "_sigma2"] = sigma2_by_tsft
         for i in range(len(self.model_names)):
             data[self.model_names[i] + "_pred_y"] = y_pred_by_tsfn[i]
             data[self.model_names[i] + "_h_n"] = latent_num_emb[i].reshape(latent_num_emb[i].shape[0], -1)
-        
+            if sigma2_by_tsfn is not None:
+                data[self.model_names[i] + "_sigma2"] = sigma2_by_tsfn[i]
+
         return data
     
     def _build_model(self):

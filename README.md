@@ -99,6 +99,40 @@ python run_offline_gating.py \
   --batch_size 32
 ```
 
+## Inverse-variance (MoGU) gating — fork extension
+
+This fork adds an **uncertainty-driven** aggregation type, `agg_type="inv_var"`, as an
+alternative to the learned transformer/MLP gate. Each expert is weighted by the inverse of
+its own predictive variance `sigma^2` (MoGU-style): the more confident expert wins. No gating
+network is trained.
+
+```bash
+python run_online_gating.py \
+  --task_name long_term_forecast --is_training 1 \
+  --root_path $MM_TSFLIB_PATH/data/Agriculture --data_path Agriculture.csv \
+  --model iTransformer --data custom \
+  --seq_len 24 --label_len 12 --pred_len 12 \
+  --llm_model BERT \
+  --agg_type inv_var \
+  --inv_var_norm per_modality
+```
+
+- New flag `--inv_var_norm`:
+  - `none` — plain `1/sigma^2` softmax across experts. Correct when experts share a variance
+    scale (e.g. several numerical experts).
+  - `per_modality` — standardizes log-variance **within each modality** before combining.
+    This fixes the central failure mode: a textual/LLM expert and a numerical expert emit
+    variances on completely different scales, so a naive `1/sigma^2` softmax collapses onto one
+    modality. Per-modality normalization keeps the gate usable.
+- Data contract: the gate reads `<expert>_sigma2` (per-expert predictive variance) alongside
+  the existing `<expert>_pred_y` / `<expert>_h_n` / `<expert>_h_t`. Experts must expose a
+  variance head (see MoGU probabilistic experts). `prepare_data_for_gating` passes these through
+  when provided and stays backward-compatible when they are absent.
+- Core logic lives in `gmm_ts/gating/inverse_variance.py` (dependency-free, torch-only) and the
+  `inv_var` branch of `gmm_ts/gating/Gating.py`.
+- Standalone CPU test (no dataset / no MM-TSFlib needed):
+  `python examples/test_inv_var_gate.py`.
+
 - More examples/tutorials: see `examples/` for shell scripts (`run_offline_gating_*.sh`, `run_online_gating_*.sh`)
 - Built on MM-TSFlib: https://github.com/AdityaLab/MM-TSFlib
 

@@ -24,7 +24,8 @@ if __name__ == '__main__':
     parser.add_argument('--checkpoints', type=str, default='./gating_checkpoints/', help='location of model checkpoints')
     parser.add_argument('--is_training', type=int, required=True, default=1, help='status')
     parser.add_argument('--pred_len', type=int, default=96, help='prediction sequence length')
-    parser.add_argument('--agg_type', type=str, default='direct', help='the gating aggregation type: direct or latent')
+    parser.add_argument('--agg_type', type=str, default='direct', help='the gating aggregation type: direct, latent, hierarchical or inv_var')
+    parser.add_argument('--inv_var_norm', type=str, default='none', help="variance handling for agg_type=inv_var: 'none' (plain 1/sigma^2) or 'per_modality' (standardize log-variance within each modality to fix the text-vs-numeric scale gap)")
     parser.add_argument('--expert_input_type', type=str, default='latent', help='using the latents or the predictions of the experts as inputs')
     parser.add_argument('--save_name', type=str, default='result_mm_longterm_forecast', help='save name')
 

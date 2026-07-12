@@ -30,7 +30,8 @@ if __name__ == '__main__':
     parser.add_argument('--model_id', type=str, required=True, default='test', help='model id')
     parser.add_argument('--model', type=str, required=True, default='Autoformer',
                         help='model name, options: [Autoformer, Transformer, TimesNet]')
-    parser.add_argument('--agg_type', type=str, default='direct', help='the gating aggregation type: direct or latent')
+    parser.add_argument('--agg_type', type=str, default='direct', help='the gating aggregation type: direct, latent, hierarchical or inv_var')
+    parser.add_argument('--inv_var_norm', type=str, default='none', help="variance handling for agg_type=inv_var: 'none' (plain 1/sigma^2) or 'per_modality' (standardize log-variance within each modality to fix the text-vs-numeric scale gap)")
     parser.add_argument('--expert_input_type', type=str, default='latent', help='using the latents or the predictions of the experts as inputs')
 
     # expert config 
