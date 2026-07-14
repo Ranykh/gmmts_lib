@@ -32,6 +32,8 @@ if __name__ == '__main__':
                         help='model name, options: [Autoformer, Transformer, TimesNet]')
     parser.add_argument('--agg_type', type=str, default='direct', help='the gating aggregation type: direct, latent, hierarchical or inv_var')
     parser.add_argument('--inv_var_norm', type=str, default='none', help="variance handling for agg_type=inv_var: 'none' (plain 1/sigma^2) or 'per_modality' (standardize log-variance within each modality to fix the text-vs-numeric scale gap)")
+    parser.add_argument('--prob_expert', type=int, default=0, help='1 = experts emit (pred, sigma^2) [MoGU]; required for agg_type=inv_var. Needs the MM-TSFlib mm-mogu branch at MM_TSFLIB_PATH')
+    parser.add_argument('--unc_head_type', type=str, default='mlp', help='uncertainty head architecture of the numeric experts: mlp or linear')
     parser.add_argument('--expert_input_type', type=str, default='latent', help='using the latents or the predictions of the experts as inputs')
 
     # expert config 
@@ -143,6 +145,10 @@ if __name__ == '__main__':
     parser.add_argument('--use_closedllm', type=int, default=0, help='use closedllm or not')    
     parser.add_argument('--huggingface_token', type=str, help='your token of huggingface;need for llama3')
     args = parser.parse_args()
+    if args.agg_type == 'inv_var' and not args.prob_expert:
+        parser.error("agg_type='inv_var' requires --prob_expert 1 (experts must emit sigma^2)")
+    if args.prob_expert and args.output_attention:
+        parser.error("--prob_expert is not supported with --output_attention")
     domain= re.search(r'/([^/]+)$', args.root_path).group(1)
     args.domain=domain
     print("now running on domain {} tsfn-models: {} tsft-model {}".format(domain,args.model, args.llm_model))

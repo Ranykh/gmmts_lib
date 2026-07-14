@@ -370,6 +370,18 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
         #self.tokenizer=self.tokenizer.to(self.device)
         self.mlp=self.mlp.to(self.device)
         self.mlp_proj=self.mlp_proj.to(self.device)
+
+        # MoGU probabilistic experts: numeric experts return (pred, sigma^2)
+        # and a softplus head derives the textual expert's sigma^2 from the
+        # pooled text latent. Enables agg_type="inv_var".
+        self.prob_expert = getattr(configs, 'prob_expert', 0)
+        if self.prob_expert:
+            hidden = max(self.text_embedding_dim // 2, 8)
+            self.text_unc_head = nn.Sequential(
+                nn.Linear(self.text_embedding_dim, hidden),
+                nn.ReLU(),
+                nn.Linear(hidden, self.pred_len),
+            ).to(self.device)
         self.learning_rate2=1e-2
         self.learning_rate3=1e-3
 
@@ -396,6 +408,32 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
     
         self.gating_module = GatingNet(args, self.experiment_experts_config).to(self.device)
         
+
+    def _unpack_expert_result(self, m_result):
+        """Split an expert forward result into (prediction, latent, sigma2).
+
+        With prob_expert=1 the MM-TSFlib mm-mogu experts return (pred, sigma^2);
+        the flattened prediction then stands in as the latent. Without it, a
+        2-tuple is (pred, latent) and sigma2 is None.
+        """
+        if isinstance(m_result, tuple) and len(m_result) == 2:
+            if self.prob_expert:
+                m_outputs, m_sigma2 = m_result
+                m_latents = m_outputs.reshape(m_outputs.shape[0], -1)
+            else:
+                m_outputs, m_latents = m_result
+                m_sigma2 = None
+        else:
+            m_outputs = m_result
+            m_latents = m_result.reshape(m_result.shape[0], -1)
+            m_sigma2 = None
+        return m_outputs, m_latents, m_sigma2
+
+    def _textual_sigma2(self, latent_text_emb):
+        """MoGU sigma^2 for the textual expert from its pooled latent: (B, pred_len)."""
+        pooled = torch.nn.functional.adaptive_avg_pool1d(
+            latent_text_emb.transpose(1, 2), 1).squeeze(2)
+        return torch.nn.functional.softplus(self.text_unc_head(pooled), threshold=20) + 1e-6
 
     def prepare_data_for_gating(self, batch_x, y_pred_by_tsfn,
                                 latent_num_emb, y_pred_by_tsft, latent_text_emb,
@@ -435,7 +473,10 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
         return model_optim
     
     def _select_optimizer_mlp(self):
-        model_optim = optim.Adam(self.mlp.parameters(), lr=self.args.learning_rate2)
+        params = list(self.mlp.parameters())
+        if self.prob_expert:
+            params += list(self.text_unc_head.parameters())
+        model_optim = optim.Adam(params, lr=self.args.learning_rate2)
         return model_optim
     
     def _select_optimizer_proj(self):
@@ -492,28 +533,25 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
                         if self.args.output_attention:
                             outputs = [m(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0] for m in self.model]
                         else:
-                            outputs, latent_num_emb = [], []
+                            outputs, latent_num_emb, sigma2_num = [], [], []
                             for m in self.model:
                                 m_result = m(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                                if isinstance(m_result, tuple) and len(m_result) == 2:
-                                    m_outputs, m_latents = m_result
-                                else:
-                                    # Model only returns outputs, flatten entire output as latent
-                                    m_outputs = m_result
-                                    # Flatten the full output to use as latent representation
-                                    m_latents = m_result.reshape(m_result.shape[0], -1)
+                                m_outputs, m_latents, m_sigma2 = self._unpack_expert_result(m_result)
                                 outputs.append(m_outputs)
                                 latent_num_emb.append(m_latents)
+                                sigma2_num.append(m_sigma2)
                                 
                 else:
                     if self.args.output_attention:
                             outputs = [m(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0] for m in self.model]
                     else:
-                        outputs, latent_num_emb = [], []
+                        outputs, latent_num_emb, sigma2_num = [], [], []
                         for m in self.model:
-                            m_outputs, m_latents = m(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                            m_result = m(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                            m_outputs, m_latents, m_sigma2 = self._unpack_expert_result(m_result)
                             outputs.append(m_outputs)
                             latent_num_emb.append(m_latents)
+                            sigma2_num.append(m_sigma2)
                 f_dim = -1 if self.args.features == 'MS' else 0
                 outputs = [o[:, -self.args.pred_len:, f_dim:] for o in outputs]
                 if self.Doc2Vec==False:
@@ -540,8 +578,15 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
                     prompt_emb=prompt_emb.unsqueeze(-1)
                 prompt_y=norm(prompt_emb)+prior_y
 
-                data = self.prepare_data_for_gating(batch_x, outputs, 
-                                latent_num_emb, prompt_y, latent_text_emb)
+                if self.prob_expert:
+                    # trim expert variances like the predictions and derive the textual sigma^2
+                    sigma2_num = [s[:, -self.args.pred_len:, f_dim:] for s in sigma2_num]
+                    sigma2_text = self._textual_sigma2(latent_text_emb)
+                else:
+                    sigma2_num, sigma2_text = None, None
+                data = self.prepare_data_for_gating(batch_x, outputs,
+                                latent_num_emb, prompt_y, latent_text_emb,
+                                sigma2_by_tsfn=sigma2_num, sigma2_by_tsft=sigma2_text)
                 outputs = self.gating_module(data)   
                 batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
 
@@ -641,34 +686,25 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
                         if self.args.output_attention:
                             outputs = [m(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0] for m in self.model]
                         else:
-                            outputs, latent_num_emb = [], []
+                            outputs, latent_num_emb, sigma2_num = [], [], []
                             for m in self.model:
                                 m_result = m(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                                if isinstance(m_result, tuple) and len(m_result) == 2:
-                                    m_outputs, m_latents = m_result
-                                else:
-                                    # Model only returns outputs, flatten entire output as latent
-                                    m_outputs = m_result
-                                    # Flatten the full output to use as latent representation
-                                    m_latents = m_result.reshape(m_result.shape[0], -1)
+                                m_outputs, m_latents, m_sigma2 = self._unpack_expert_result(m_result)
                                 outputs.append(m_outputs)
                                 latent_num_emb.append(m_latents)
+                                sigma2_num.append(m_sigma2)
                                 
                 else:
                     if self.args.output_attention:
                             outputs = [m(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0] for m in self.model]
                     else:
-                        outputs, latent_num_emb = [], []
+                        outputs, latent_num_emb, sigma2_num = [], [], []
                         for m in self.model:
                             m_result = m(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                            if isinstance(m_result, tuple) and len(m_result) == 2:
-                                m_outputs, m_latents = m_result
-                            else:
-                                # Model only returns outputs, use outputs as latents
-                                m_outputs = m_result
-                                m_latents = m_result[:, -self.args.pred_len:, :]  # Use final predictions as latents
+                            m_outputs, m_latents, m_sigma2 = self._unpack_expert_result(m_result)
                             outputs.append(m_outputs)
                             latent_num_emb.append(m_latents)
+                            sigma2_num.append(m_sigma2)
                 f_dim = -1 if self.args.features == 'MS' else 0
                 outputs = [o[:, -self.args.pred_len:, f_dim:] for o in outputs]
                 if self.Doc2Vec==False:
@@ -697,8 +733,15 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
                     prompt_emb=prompt_emb.unsqueeze(-1)
                 prompt_y=norm(prompt_emb)+prior_y
                 num_outputs=outputs
-                data = self.prepare_data_for_gating(batch_x, outputs, 
-                                latent_num_emb, prompt_y, latent_text_emb)
+                if self.prob_expert:
+                    # trim expert variances like the predictions and derive the textual sigma^2
+                    sigma2_num = [s[:, -self.args.pred_len:, f_dim:] for s in sigma2_num]
+                    sigma2_text = self._textual_sigma2(latent_text_emb)
+                else:
+                    sigma2_num, sigma2_text = None, None
+                data = self.prepare_data_for_gating(batch_x, outputs,
+                                latent_num_emb, prompt_y, latent_text_emb,
+                                sigma2_by_tsfn=sigma2_num, sigma2_by_tsft=sigma2_text)
 
                 outputs = self.gating_module(data)     
                 
@@ -706,8 +749,16 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
                 
                 batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
                 loss = criterion(outputs, batch_y)
-                for num_mo in num_outputs: 
-                    loss += criterion(num_mo, batch_y) 
+                if self.prob_expert:
+                    # Gaussian NLL per expert so the variance heads learn a
+                    # calibrated sigma^2 (MoGU); gated output keeps the MSE term.
+                    gnll = nn.GaussianNLLLoss()
+                    for num_mo, s2 in zip(num_outputs, sigma2_num):
+                        loss += gnll(num_mo, batch_y, s2)
+                    loss += gnll(prompt_y, batch_y, sigma2_text.unsqueeze(-1))
+                else:
+                    for num_mo in num_outputs:
+                        loss += criterion(num_mo, batch_y)
                 train_loss.append(loss.item())
 
                 if (i + 1) % 100 == 0:
@@ -811,28 +862,25 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
                         if self.args.output_attention:
                             outputs = [m(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0] for m in self.model]
                         else:
-                            outputs, latent_num_emb = [], []
+                            outputs, latent_num_emb, sigma2_num = [], [], []
                             for m in self.model:
                                 m_result = m(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                                if isinstance(m_result, tuple) and len(m_result) == 2:
-                                    m_outputs, m_latents = m_result
-                                else:
-                                    # Model only returns outputs, flatten entire output as latent
-                                    m_outputs = m_result
-                                    # Flatten the full output to use as latent representation
-                                    m_latents = m_result.reshape(m_result.shape[0], -1)
+                                m_outputs, m_latents, m_sigma2 = self._unpack_expert_result(m_result)
                                 outputs.append(m_outputs)
                                 latent_num_emb.append(m_latents)
+                                sigma2_num.append(m_sigma2)
                                 
                 else:
                     if self.args.output_attention:
                             outputs = [m(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0] for m in self.model]
                     else:
-                        outputs, latent_num_emb = [], []
+                        outputs, latent_num_emb, sigma2_num = [], [], []
                         for m in self.model:
-                            m_outputs, m_latents = m(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                            m_result = m(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                            m_outputs, m_latents, m_sigma2 = self._unpack_expert_result(m_result)
                             outputs.append(m_outputs)
                             latent_num_emb.append(m_latents)
+                            sigma2_num.append(m_sigma2)
                 f_dim = -1 if self.args.features == 'MS' else 0
                 outputs = [o[:, -self.args.pred_len:, f_dim:] for o in outputs]
                 if self.Doc2Vec==False:
@@ -863,8 +911,15 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
                 #outputs=(1-self.prompt_weight)*outputs+self.prompt_weight*prompt_y
                 f_dim = -1 if self.args.features == 'MS' else 0
                 
-                data = self.prepare_data_for_gating(batch_x, outputs, 
-                                latent_num_emb, prompt_y, latent_text_emb)
+                if self.prob_expert:
+                    # trim expert variances like the predictions and derive the textual sigma^2
+                    sigma2_num = [s[:, -self.args.pred_len:, f_dim:] for s in sigma2_num]
+                    sigma2_text = self._textual_sigma2(latent_text_emb)
+                else:
+                    sigma2_num, sigma2_text = None, None
+                data = self.prepare_data_for_gating(batch_x, outputs,
+                                latent_num_emb, prompt_y, latent_text_emb,
+                                sigma2_by_tsfn=sigma2_num, sigma2_by_tsft=sigma2_text)
                 outputs = self.gating_module(data)   
 
                 #outputs=(1-self.prompt_weight)*outputs+self.prompt_weight*prompt_y
