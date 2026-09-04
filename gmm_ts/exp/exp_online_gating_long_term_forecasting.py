@@ -142,7 +142,12 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
                         config=self.llama_config,
                         # load_in_4bit=True
                     )
-                except EnvironmentError:  # downloads model from HF is not already done
+                except Exception:  # cache miss -> download. NOT just EnvironmentError:
+                    # with local_files_only=True and an empty cache, transformers 4.57
+                    # returns checkpoint_files=None and dies in from_pretrained with
+                    # AttributeError: 'NoneType' object has no attribute 'endswith'
+                    # -- which EnvironmentError does not catch, so the fallback
+                    # download never ran and LLAMA2 could never be fetched.
                     print("Local model files not found. Attempting to download...")
                     self.llm_model = LlamaModel.from_pretrained(
                         # "/mnt/alps/modelhub/pretrained_model/LLaMA/7B_hf/",
@@ -159,7 +164,12 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
                         trust_remote_code=True,
                         local_files_only=True
                     )
-                except EnvironmentError:  # downloads the tokenizer from HF if not already done
+                except Exception:  # cache miss -> download. NOT just EnvironmentError:
+                    # with local_files_only=True and an empty cache, transformers 4.57
+                    # returns checkpoint_files=None and dies in from_pretrained with
+                    # AttributeError: 'NoneType' object has no attribute 'endswith'
+                    # -- which EnvironmentError does not catch, so the fallback
+                    # download never ran and LLAMA2 could never be fetched.
                     print("Local tokenizer files not found. Atempting to download them..")
                     self.tokenizer = LlamaTokenizer.from_pretrained(
                         # "/mnt/alps/modelhub/pretrained_model/LLaMA/7B_hf/tokenizer.model",
@@ -209,7 +219,12 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
                         local_files_only=True,
                         config=self.gpt2_config,
                     )
-                except EnvironmentError:  # downloads model from HF is not already done
+                except Exception:  # cache miss -> download. NOT just EnvironmentError:
+                    # with local_files_only=True and an empty cache, transformers 4.57
+                    # returns checkpoint_files=None and dies in from_pretrained with
+                    # AttributeError: 'NoneType' object has no attribute 'endswith'
+                    # -- which EnvironmentError does not catch, so the fallback
+                    # download never ran and LLAMA2 could never be fetched.
                     print("Local model files not found. Attempting to download...")
                     self.llm_model = GPT2Model.from_pretrained(
                         'openai-community/gpt2-medium',
@@ -224,7 +239,12 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
                         trust_remote_code=True,
                         local_files_only=True
                     )
-                except EnvironmentError:  # downloads the tokenizer from HF if not already done
+                except Exception:  # cache miss -> download. NOT just EnvironmentError:
+                    # with local_files_only=True and an empty cache, transformers 4.57
+                    # returns checkpoint_files=None and dies in from_pretrained with
+                    # AttributeError: 'NoneType' object has no attribute 'endswith'
+                    # -- which EnvironmentError does not catch, so the fallback
+                    # download never ran and LLAMA2 could never be fetched.
                     print("Local tokenizer files not found. Atempting to download them..")
                     self.tokenizer = GPT2Tokenizer.from_pretrained(
                         'openai-community/gpt2-medium',
@@ -244,7 +264,12 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
                         local_files_only=True,
                         config=self.gpt2_config,
                     )
-                except EnvironmentError:  # downloads model from HF is not already done
+                except Exception:  # cache miss -> download. NOT just EnvironmentError:
+                    # with local_files_only=True and an empty cache, transformers 4.57
+                    # returns checkpoint_files=None and dies in from_pretrained with
+                    # AttributeError: 'NoneType' object has no attribute 'endswith'
+                    # -- which EnvironmentError does not catch, so the fallback
+                    # download never ran and LLAMA2 could never be fetched.
                     print("Local model files not found. Attempting to download...")
                     self.llm_model = GPT2Model.from_pretrained(
                         'openai-community/gpt2-large',
@@ -259,7 +284,12 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
                         trust_remote_code=True,
                         local_files_only=True
                     )
-                except EnvironmentError:  # downloads the tokenizer from HF if not already done
+                except Exception:  # cache miss -> download. NOT just EnvironmentError:
+                    # with local_files_only=True and an empty cache, transformers 4.57
+                    # returns checkpoint_files=None and dies in from_pretrained with
+                    # AttributeError: 'NoneType' object has no attribute 'endswith'
+                    # -- which EnvironmentError does not catch, so the fallback
+                    # download never ran and LLAMA2 could never be fetched.
                     print("Local tokenizer files not found. Atempting to download them..")
                     self.tokenizer = GPT2Tokenizer.from_pretrained(
                         'openai-community/gpt2-large',
@@ -279,7 +309,12 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
                         local_files_only=True,
                         config=self.gpt2_config,
                     )
-                except EnvironmentError:  # downloads model from HF is not already done
+                except Exception:  # cache miss -> download. NOT just EnvironmentError:
+                    # with local_files_only=True and an empty cache, transformers 4.57
+                    # returns checkpoint_files=None and dies in from_pretrained with
+                    # AttributeError: 'NoneType' object has no attribute 'endswith'
+                    # -- which EnvironmentError does not catch, so the fallback
+                    # download never ran and LLAMA2 could never be fetched.
                     print("Local model files not found. Attempting to download...")
                     self.llm_model = GPT2Model.from_pretrained(
                         'openai-community/gpt2-xl',
@@ -294,7 +329,12 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
                         trust_remote_code=True,
                         local_files_only=True
                     )
-                except EnvironmentError:  # downloads the tokenizer from HF if not already done
+                except Exception:  # cache miss -> download. NOT just EnvironmentError:
+                    # with local_files_only=True and an empty cache, transformers 4.57
+                    # returns checkpoint_files=None and dies in from_pretrained with
+                    # AttributeError: 'NoneType' object has no attribute 'endswith'
+                    # -- which EnvironmentError does not catch, so the fallback
+                    # download never ran and LLAMA2 could never be fetched.
                     print("Local tokenizer files not found. Atempting to download them..")
                     self.tokenizer = GPT2Tokenizer.from_pretrained(
                         'openai-community/gpt2-xl',
@@ -314,7 +354,12 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
                         local_files_only=True,
                         config=self.bert_config,
                     )
-                except EnvironmentError:  # downloads model from HF is not already done
+                except Exception:  # cache miss -> download. NOT just EnvironmentError:
+                    # with local_files_only=True and an empty cache, transformers 4.57
+                    # returns checkpoint_files=None and dies in from_pretrained with
+                    # AttributeError: 'NoneType' object has no attribute 'endswith'
+                    # -- which EnvironmentError does not catch, so the fallback
+                    # download never ran and LLAMA2 could never be fetched.
                     print("Local model files not found. Attempting to download...")
                     self.llm_model = BertModel.from_pretrained(
                         'google-bert/bert-base-uncased',
@@ -329,7 +374,12 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
                         trust_remote_code=True,
                         local_files_only=True
                     )
-                except EnvironmentError:  # downloads the tokenizer from HF if not already done
+                except Exception:  # cache miss -> download. NOT just EnvironmentError:
+                    # with local_files_only=True and an empty cache, transformers 4.57
+                    # returns checkpoint_files=None and dies in from_pretrained with
+                    # AttributeError: 'NoneType' object has no attribute 'endswith'
+                    # -- which EnvironmentError does not catch, so the fallback
+                    # download never ran and LLAMA2 could never be fetched.
                     print("Local tokenizer files not found. Atempting to download them..")
                     self.tokenizer = BertTokenizer.from_pretrained(
                         'google-bert/bert-base-uncased',
