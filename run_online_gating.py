@@ -31,7 +31,17 @@ if __name__ == '__main__':
     parser.add_argument('--model', type=str, required=True, default='Autoformer',
                         help='model name, options: [Autoformer, Transformer, TimesNet]')
     parser.add_argument('--agg_type', type=str, default='direct', help='the gating aggregation type: direct, latent, hierarchical or inv_var')
-    parser.add_argument('--inv_var_norm', type=str, default='none', help="variance handling for agg_type=inv_var: 'none' (plain 1/sigma^2) or 'per_modality' (standardize log-variance within each modality to fix the text-vs-numeric scale gap)")
+    parser.add_argument('--inv_var_norm', type=str, default='none',
+                        choices=['none', 'per_modality', 'calibrated'],
+                        help="variance handling for agg_type=inv_var. "
+                             "'none': plain 1/sigma^2. "
+                             "'per_modality': z-score log-variance within each "
+                             "modality -- note this is invariant to rescaling any "
+                             "expert's variance, so it cannot correct "
+                             "overconfidence. "
+                             "'calibrated': fit c_e = E_val[(y-yhat_e)^2] / "
+                             "E_val[sigma^2_e] per expert on the validation split "
+                             "after training, then weight by 1/(c_e sigma^2_e)")
     parser.add_argument('--prob_expert', type=int, default=0, help='1 = experts emit (pred, sigma^2) [MoGU]; required for agg_type=inv_var. Needs the MM-TSFlib mm-mogu branch at MM_TSFLIB_PATH')
     parser.add_argument('--save_gate_weights', type=int, default=0,
                         help='1 = write gate_weights.npy at test time; their std across samples is the only way to tell a routing gate from a collapsed one')

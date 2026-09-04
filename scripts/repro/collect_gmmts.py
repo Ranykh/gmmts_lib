@@ -111,6 +111,8 @@ AGG_TO_METHOD = {
 def method_of(agg, inv_var_norm):
     if agg == "inv_var" and inv_var_norm == "per_modality":
         return "G4n_IV_permod"
+    if agg == "inv_var" and inv_var_norm == "calibrated":
+        return "G4c_IV_calib"
     return AGG_TO_METHOD.get(agg, agg)
 
 FIELDS = ["repo", "git_sha", "git_dirty", "mm_tsflib_sha",
@@ -118,7 +120,7 @@ FIELDS = ["repo", "git_sha", "git_dirty", "mm_tsflib_sha",
           "agg_type", "prob_expert", "inv_var_norm", "expert_input_type",
           "pred_len", "seed",
           "mse", "mae", "rmse", "mape", "mspe",
-          "gate_w_std", "name_complete", "setting", "run_dir", "mtime"]
+          "gate_w_std", "gate_w_mean", "name_complete", "setting", "run_dir", "mtime"]
 
 
 def git_info(root):
@@ -156,10 +158,13 @@ def read_gate(run_dir):
             try:
                 w = np.load(path)
                 if w.ndim >= 2:
-                    return round(float(w.std(axis=0).mean()), 6)
+                    other = tuple(i for i in range(w.ndim) if i != 1)
+                    return (round(float(w.std(axis=0).mean()), 6),
+                            "|".join(f"{v:.4f}" for v in
+                                     np.atleast_1d(w.mean(axis=other))))
             except (OSError, ValueError):
-                return ""
-    return ""
+                return "", ""
+    return "", ""
 
 
 def scan(results_root, repo_root, mm_sha):
@@ -201,7 +206,8 @@ def scan(results_root, repo_root, mm_sha):
             "expert_input_type": d["expert_input_type"],
             "pred_len": int(d["pred_len"]),
             "seed": int(d["seed"]) if d["seed"] else "",
-            "gate_w_std": read_gate(run_dir),
+            "gate_w_std": read_gate(run_dir)[0],
+            "gate_w_mean": read_gate(run_dir)[1],
             "name_complete": "yes" if complete else "NO",
             "setting": name, "run_dir": run_dir,
             "mtime": _dt.datetime.fromtimestamp(

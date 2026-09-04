@@ -8,6 +8,7 @@
 #            g3        GMM-TS baseline reproduced in OUR harness (agg_type=direct)
 #            g4        MM-MoGU, inverse-variance gate (agg_type=inv_var, prob_expert=1)
 #            g4norm    MM-MoGU with per-modality log-variance normalisation
+#            g4cal     MM-MoGU with per-expert validation calibration (the fix)
 #            all       g3 then g4
 #
 #   Examples
@@ -79,7 +80,7 @@
 # =============================================================================
 set -uo pipefail
 
-GPU_ID=${1:?usage: run_mmmogu_sweep.sh <gpu_id> <smoke|g3|g4|g4norm|all>}
+GPU_ID=${1:?usage: run_mmmogu_sweep.sh <gpu_id> <smoke|g3|g4|g4cal|g4norm|all>}
 WHAT=${2:-smoke}
 
 export CUDA_VISIBLE_DEVICES="$GPU_ID"
@@ -374,6 +375,20 @@ case "$WHAT" in
     sweep inv_var 1 none
     ;;
 
+  g4cal)
+    # MM-MoGU with per-expert variance CALIBRATION -- the variant the earlier
+    # frozen-expert study found actually works (22-37% recovery, and it beat the
+    # learned gate at p=0.0075). After training, one validation pass fits
+    #     c_e = E_val[(y - yhat_e)^2] / E_val[sigma^2_e]
+    # per expert, and the gate then weights by 1/(c_e sigma^2_e). A factor common
+    # to all experts cancels in the normalisation, so only the RATIO between
+    # experts matters -- which is precisely what per_modality's z-score removes.
+    # Watch the printed c_e values: text >> numeric is the overconfidence that
+    # makes raw inverse variance fail.
+    echo "### G4-cal: agg_type=inv_var, prob_expert=1, norm=calibrated ###"
+    sweep inv_var 1 calibrated
+    ;;
+
   g4norm)
     # Per-modality log-variance normalisation. Known from the earlier controlled
     # bake-off to be PROVABLY invariant to per-expert variance rescaling
@@ -390,7 +405,7 @@ case "$WHAT" in
     ;;
 
   *)
-    echo "unknown '$WHAT'. use: smoke | g3 | g4 | g4norm | all" >&2
+    echo "unknown '$WHAT'. use: smoke | g3 | g4 | g4cal | g4norm | all" >&2
     exit 1
     ;;
 esac

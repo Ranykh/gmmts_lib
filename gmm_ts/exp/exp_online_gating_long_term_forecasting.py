@@ -425,6 +425,13 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
         # and a softplus head derives the textual expert's sigma^2 from the
         # pooled text latent. Enables agg_type="inv_var".
         self.prob_expert = getattr(configs, 'prob_expert', 0)
+        self.inv_var_norm = getattr(configs, 'inv_var_norm', 'none')
+        # Per-expert variance calibration, estimated on the validation split
+        # AFTER training. Empty until then, and empty forever unless
+        # --inv_var_norm calibrated is passed.
+        self.calib_factors = {}
+        self._collect_calib = False
+        self._calib = {}
         if self.prob_expert:
             # The head is fed the POOLED `latent_text_emb`, and that tensor is
             # MLP.forward's second return value `h` -- the second-to-last
@@ -497,6 +504,76 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
             latent_text_emb.transpose(1, 2), 1).squeeze(2)
         return torch.nn.functional.softplus(self.text_unc_head(pooled), threshold=20) + 1e-6
 
+
+    # ------------------------------------------------------------------
+    # Per-expert variance calibration
+    #
+    # Raw 1/sigma^2 weighting assumes every expert's reported variance is on a
+    # comparable scale. Measured on this project's data it is not: the
+    # calibration ratio c = MSE / mean(sigma^2) came out around 11 for the text
+    # experts against about 4 for the numeric ones, so the text expert is
+    # systematically OVERCONFIDENT and raw inverse variance hands it weight it
+    # has not earned.
+    #
+    # The fix is one scalar per expert, fitted on held-out data:
+    #
+    #     c_e = E_val[(y - yhat_e)^2] / E_val[sigma^2_e]
+    #     sigma~^2_e = c_e * sigma^2_e          ->   w_e proportional to 1/(c_e sigma^2_e)
+    #
+    # This is temperature scaling (Guo et al., 2017) moved from the logit domain
+    # into the variance domain. A c_e common to every expert cancels in the
+    # normalisation, so only the RATIOS between experts matter -- which is
+    # exactly the quantity a per-modality z-score destroys, and why
+    # inv_var_norm=per_modality cannot do this job.
+    # ------------------------------------------------------------------
+    def _calib_reset(self):
+        self._calib = {}
+
+    def _calib_accum(self, triples, y_true):
+        """triples: (expert_name, prediction, sigma^2). Shapes may differ per
+        expert -- the text head emits (B, pred_len) while numeric experts emit
+        (B, pred_len, 1) -- so both terms are reduced with .mean()."""
+        for name, pred, var in triples:
+            if var is None or pred is None:
+                continue
+            d = self._calib.setdefault(name, {"se": 0.0, "var": 0.0, "n": 0})
+            d["se"] += float(((pred - y_true) ** 2).mean().item())
+            d["var"] += float(var.mean().item())
+            d["n"] += 1
+
+    def _calib_finalise(self):
+        out = {}
+        for name, d in self._calib.items():
+            if d["n"] == 0 or d["var"] <= 0:
+                continue
+            out[name] = (d["se"] / d["n"]) / (d["var"] / d["n"])
+        return out
+
+    def _estimate_calibration(self, vali_data, vali_loader):
+        """One extra validation pass with the trained model, to fit c_e."""
+        self.calib_factors = {}          # must be empty during the pass itself,
+        self._calib_reset()              # or the estimate would be circular
+        self._collect_calib = True
+        try:
+            self.vali(vali_data, vali_loader, nn.MSELoss())
+        finally:
+            self._collect_calib = False
+        self.calib_factors = self._calib_finalise()
+        if self.calib_factors:
+            print("calibration factors c_e = E[(y-yhat)^2] / E[sigma^2] "
+                  "(higher = more overconfident):")
+            for name, c in sorted(self.calib_factors.items(),
+                                  key=lambda kv: -kv[1]):
+                print("    {:<16} c = {:.3f}".format(name, c))
+        else:
+            print("!! no calibration factors estimated -- variances unavailable")
+
+    def _apply_calib(self, name, sigma2):
+        c = self.calib_factors.get(name)
+        if c is None or sigma2 is None:
+            return sigma2
+        return sigma2 * c
+
     def prepare_data_for_gating(self, batch_x, y_pred_by_tsfn,
                                 latent_num_emb, y_pred_by_tsft, latent_text_emb,
                                 sigma2_by_tsfn=None, sigma2_by_tsft=None):
@@ -509,12 +586,14 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
         # Optional per-expert predictive variance for agg_type="inv_var".
         # Backward-compatible: when experts do not emit variance these stay absent.
         if sigma2_by_tsft is not None:
-            data[self.args.llm_model + "_sigma2"] = sigma2_by_tsft
+            data[self.args.llm_model + "_sigma2"] = self._apply_calib(
+                self.args.llm_model, sigma2_by_tsft)
         for i in range(len(self.model_names)):
             data[self.model_names[i] + "_pred_y"] = y_pred_by_tsfn[i]
             data[self.model_names[i] + "_h_n"] = latent_num_emb[i].reshape(latent_num_emb[i].shape[0], -1)
             if sigma2_by_tsfn is not None:
-                data[self.model_names[i] + "_sigma2"] = sigma2_by_tsfn[i]
+                data[self.model_names[i] + "_sigma2"] = self._apply_calib(
+                    self.model_names[i], sigma2_by_tsfn[i])
 
         return data
     
@@ -646,6 +725,14 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
                     sigma2_text = self._textual_sigma2(latent_text_emb)
                 else:
                     sigma2_num, sigma2_text = None, None
+                # Fitting c_e needs per-expert predictions and variances together with the
+                # ground truth. They exist here and nowhere else, so accumulate in place.
+                if self._collect_calib and self.prob_expert:
+                    _y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+                    _triples = [(self.model_names[_i], outputs[_i], sigma2_num[_i])
+                                for _i in range(len(outputs))]
+                    _triples.append((self.args.llm_model, prompt_y, sigma2_text))
+                    self._calib_accum(_triples, _y)
                 data = self.prepare_data_for_gating(batch_x, outputs,
                                 latent_num_emb, prompt_y, latent_text_emb,
                                 sigma2_by_tsfn=sigma2_num, sigma2_by_tsft=sigma2_text)
@@ -872,6 +959,11 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
 
         best_gating_model_path = gating_model_path + '/' + 'checkpoint.pth'
         self.gating_module.load_state_dict(torch.load(best_gating_model_path))
+
+        # Calibrate on validation with the BEST checkpoints loaded, never on
+        # train (the experts have already fitted it) and never on test.
+        if self.prob_expert and self.inv_var_norm == 'calibrated':
+            self._estimate_calibration(vali_data, vali_loader)
 
 
         return self.model
