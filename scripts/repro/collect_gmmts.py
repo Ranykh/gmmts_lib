@@ -86,13 +86,32 @@ DOMAIN_TO_SHEET = {
     "Traffic": "Traffic",
 }
 
-# agg_type -> the gate column the workbook calls it.
+# (agg_type, inv_var_norm) -> the label used everywhere downstream.
+#
+# inv_var MUST be split by inv_var_norm. Both variants write agg_type=inv_var,
+# so collapsing them to one label would silently average two different methods
+# into one cell.
+#
+#   none          raw 1/sigma^2                       -> G4_IV
+#   per_modality  log-variance z-scored WITHIN each    -> G4n_IV_permod
+#                 modality (Gating.py:136)
+#
+# G4n is NOT the workbook's G5 SNIV. G5 is w ~ (sigma^-2 / s_i) with
+# s_i = E_val[sigma_i^-2], a per-EXPERT validation estimate. A per-modality
+# z-score is a different operation -- and one that is provably invariant to
+# per-expert variance rescaling, so it cannot substitute for calibration.
 AGG_TO_METHOD = {
     "direct": "G3_ATTN_direct",
     "latent": "G3_ATTN_latent",
     "hierarchical": "G3_ATTN_hierarchical",
     "inv_var": "G4_IV",
 }
+
+
+def method_of(agg, inv_var_norm):
+    if agg == "inv_var" and inv_var_norm == "per_modality":
+        return "G4n_IV_permod"
+    return AGG_TO_METHOD.get(agg, agg)
 
 FIELDS = ["repo", "git_sha", "git_dirty", "mm_tsflib_sha",
           "method", "domain", "domain_sheet", "tsf_n", "tsf_t",
@@ -172,7 +191,7 @@ def scan(results_root, repo_root, mm_sha):
         row = {
             "repo": "gmmts_lib",
             "git_sha": sha, "git_dirty": dirty, "mm_tsflib_sha": mm_sha,
-            "method": AGG_TO_METHOD.get(agg, agg),
+            "method": method_of(agg, d["inv_var_norm"] or ""),
             "domain": d["domain"],
             "domain_sheet": DOMAIN_TO_SHEET.get(d["domain"], d["domain"]),
             "tsf_n": d["tsf_n"], "tsf_t": d["tsf_t"],
@@ -252,7 +271,7 @@ def audit(rows, unparsed, incomplete, results_root):
     g3 = {(r["domain"], r["tsf_n"], r["tsf_t"], r["pred_len"], r["seed"])
           for r in rows if r["agg_type"] == "direct"}
     g4 = {(r["domain"], r["tsf_n"], r["tsf_t"], r["pred_len"], r["seed"])
-          for r in rows if r["agg_type"] == "inv_var"}
+          for r in rows if r["method"] == "G4_IV"}
     both, only3, only4 = g3 & g4, g3 - g4, g4 - g3
     print(f"\npaired cells (G3 and G4 both present): {len(both)}")
     if only3 or only4:
@@ -263,7 +282,7 @@ def audit(rows, unparsed, incomplete, results_root):
         m3 = {(r["domain"], r["tsf_n"], r["tsf_t"], r["pred_len"], r["seed"]): r["mse"]
               for r in rows if r["agg_type"] == "direct"}
         m4 = {(r["domain"], r["tsf_n"], r["tsf_t"], r["pred_len"], r["seed"]): r["mse"]
-              for r in rows if r["agg_type"] == "inv_var"}
+              for r in rows if r["method"] == "G4_IV"}
         for k in both:
             if m4[k] < m3[k]:
                 wins += 1
