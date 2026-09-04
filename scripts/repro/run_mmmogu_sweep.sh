@@ -273,7 +273,8 @@ run_one () {
       --agg_type "$agg" \
       --prob_expert "$pe" \
       --inv_var_norm "$norm" \
-      --all_experts_config "$ALL_EXPERTS_CONFIG"
+      --all_experts_config "$ALL_EXPERTS_CONFIG" \
+      --save_gate_weights "${SAVE_GATE_WEIGHTS:-1}"
   } 2>&1 | tee "$log"
   rc=${PIPESTATUS[0]}
   elapsed=$(( $(date +%s) - start ))

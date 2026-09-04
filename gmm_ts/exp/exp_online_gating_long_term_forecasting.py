@@ -880,6 +880,7 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
         test_data, test_loader = self._get_data(flag=data_flag)
         
         preds = []
+        gate_weights = []   # see --save_gate_weights
         trues = []
         folder_path = './{}_online_gating_results/'.format(data_flag) + setting + '/'
         if not os.path.exists(folder_path):
@@ -982,7 +983,15 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
                 data = self.prepare_data_for_gating(batch_x, outputs,
                                 latent_num_emb, prompt_y, latent_text_emb,
                                 sigma2_by_tsfn=sigma2_num, sigma2_by_tsft=sigma2_text)
-                outputs = self.gating_module(data)   
+                # GatingNet.forward accepts return_w for EVERY aggregation type, inv_var
+                # included. Without this, a gate that collapsed to a constant blend is
+                # indistinguishable from one that is genuinely routing -- and the MSE
+                # will not tell you which of the two you have.
+                if getattr(self.args, 'save_gate_weights', 0):
+                    outputs, _gate_w = self.gating_module(data, return_w=True)
+                    gate_weights.append(_gate_w.detach().float().cpu().numpy())
+                else:
+                    outputs = self.gating_module(data)
 
                 #outputs=(1-self.prompt_weight)*outputs+self.prompt_weight*prompt_y
                 
@@ -1037,6 +1046,12 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
         np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
         np.save(folder_path + 'pred.npy', preds)
         np.save(folder_path + 'true.npy', trues)
+        if gate_weights:
+            try:
+                np.save(folder_path + 'gate_weights.npy',
+                        np.concatenate(gate_weights, axis=0))
+            except Exception as _e:   # diagnostics must never kill a finished run
+                print('could not save gate_weights.npy: ' + str(_e))
         
 
         return mse

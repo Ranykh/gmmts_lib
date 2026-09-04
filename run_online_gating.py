@@ -33,6 +33,8 @@ if __name__ == '__main__':
     parser.add_argument('--agg_type', type=str, default='direct', help='the gating aggregation type: direct, latent, hierarchical or inv_var')
     parser.add_argument('--inv_var_norm', type=str, default='none', help="variance handling for agg_type=inv_var: 'none' (plain 1/sigma^2) or 'per_modality' (standardize log-variance within each modality to fix the text-vs-numeric scale gap)")
     parser.add_argument('--prob_expert', type=int, default=0, help='1 = experts emit (pred, sigma^2) [MoGU]; required for agg_type=inv_var. Needs the MM-TSFlib mm-mogu branch at MM_TSFLIB_PATH')
+    parser.add_argument('--save_gate_weights', type=int, default=0,
+                        help='1 = write gate_weights.npy at test time; their std across samples is the only way to tell a routing gate from a collapsed one')
     parser.add_argument('--unc_head_type', type=str, default='mlp', help='uncertainty head architecture of the numeric experts: mlp or linear')
     parser.add_argument('--expert_input_type', type=str, default='latent', help='using the latents or the predictions of the experts as inputs')
 
