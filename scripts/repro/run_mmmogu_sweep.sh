@@ -280,6 +280,11 @@ run_one () {
   elapsed=$(( $(date +%s) - start ))
 
   if [ "$rc" -eq 0 ] && [ -f "$RESULTS_DIR/$setting/metrics.npy" ]; then
+    # `mv src dst` puts src INSIDE dst when dst is an existing directory, which
+    # silently nests a fresh run underneath a stale one and leaves the collector
+    # reading the old metrics.npy. Clear the target first so the rename really
+    # replaces it.
+    [ -d "$RESULTS_DIR/$final" ] && rm -rf "$RESULTS_DIR/$final"
     mv "$RESULTS_DIR/$setting" "$RESULTS_DIR/$final"
     mse=$(grep "^mse:" "$log" | tail -1)
     echo "    OK  (${elapsed}s)  $mse"
