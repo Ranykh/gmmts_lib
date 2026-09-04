@@ -130,7 +130,9 @@ def git_info(root):
         sha = _run(["git", "rev-parse", "HEAD"])
         if sha.returncode != 0:
             return "NO-GIT", ""
-        st = _run(["git", "status", "--porcelain"])
+        # Untracked run output does not change the code that produced a
+        # result, so it must not invalidate the SHA.
+        st = _run(["git", "status", "--porcelain", "--untracked-files=no"])
         return sha.stdout.strip(), ("yes" if st.stdout.strip() else "no")
     except (OSError, subprocess.SubprocessError):
         return "NO-GIT", ""

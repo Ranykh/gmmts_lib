@@ -173,7 +173,7 @@ fi
 
 # ----- provenance -----------------------------------------------------------
 GIT_SHA=$(git rev-parse HEAD 2>/dev/null || echo "NO-GIT")
-GIT_DIRTY=$(git status --porcelain 2>/dev/null | head -c1)
+GIT_DIRTY=$(git status --porcelain --untracked-files=no 2>/dev/null | head -c1)
 MM_SHA=$(git -C "$MM_TSFLIB_PATH" rev-parse HEAD 2>/dev/null || echo "NO-GIT")
 MM_BRANCH=$(git -C "$MM_TSFLIB_PATH" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "?")
 RUN_STAMP=$(date +%F_%H%M%S)
