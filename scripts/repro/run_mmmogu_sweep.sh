@@ -114,15 +114,31 @@ declare -A DATA_FILE=(
   [Climate]="US_precipitation_month.csv"                 # gate should suppress it
 )
 
-# Three expert pairs, varying ONE factor at a time from a common corner, so a
-# difference can be attributed. "DLinear x GPT2" is the anchor: DLinear is the
-# strongest numeric expert in the published ablation (Table 20) and GPT2 is the
-# cheapest text expert.
-#   pair 2 changes the numeric backbone only
-#   pair 3 changes the text expert only
-# GPT3.5 is deliberately absent: it needs the Final_Output column, which exists
-# in Energy, Public_Health and Traffic only -- Economy and SocialGood KeyError.
-PAIRS="${PAIRS:-DLinear:GPT2 PatchTST:GPT2 DLinear:LLAMA2}"
+# Three expert pairs. The numeric expert is CONSTRAINED, not chosen freely:
+#
+#   Only PatchTST and iTransformer were given an UncHead on the mm-mogu branch.
+#   DLinear, FiLM, Informer and Reformer are byte-identical to upstream -- they
+#   return a plain tensor, never (pred, sigma^2). With --prob_expert 1 the exp's
+#   _unpack_expert_result sets m_sigma2 = None and training dies at
+#   exp_online_gating_long_term_forecasting.py:738 with
+#       TypeError: 'NoneType' object is not subscriptable
+#   So an inverse-variance gate is IMPOSSIBLE with those four experts.
+#
+# Of the two that work, only PatchTST also appears in the published
+# Pairwise_Baselines table (its TSF-N set is DLinear/FiLM/Informer/PatchTST/
+# Reformer -- no iTransformer). So PatchTST is the anchor: it is the single
+# expert that can both emit sigma^2 and be compared against a published number.
+#
+#   pair 1  PatchTST x GPT2      anchor; published G1 and G3 both exist
+#   pair 2  PatchTST x LLAMA2    the other published text expert for Economy
+#   pair 3  iTransformer x GPT2  changes the numeric backbone; internal only
+#
+# Pairs 1 and 2 are the only ones in this whole grid that can be set beside a
+# published number, so both are in the default set even though LLAMA2 is 7B and
+# token-gated -- smoke it before committing to a long sweep. GPT3.5 needs a
+# Final_Output column (Energy, Public_Health, Traffic only), so it is unavailable
+# on Economy and SocialGood. BERT runs fine but has no published monthly row.
+PAIRS="${PAIRS:-PatchTST:GPT2 PatchTST:LLAMA2 iTransformer:GPT2}"
 
 HORIZONS="${HORIZONS:-6 8 10 12}"
 SEEDS="${SEEDS:-2021}"
@@ -284,8 +300,27 @@ run_one () {
   fi
 }
 
+# Experts that were given an UncHead on mm-mogu and can therefore emit sigma^2.
+# Anything else + prob_expert=1 dies at exp_online...py:738 on a None sigma2.
+UNC_CAPABLE_EXPERTS="PatchTST iTransformer"
+
 sweep () {   # sweep <agg_type> <prob_expert> <inv_var_norm>
   local agg=$1 pe=$2 norm=$3
+  if [ "$pe" = "1" ]; then
+    for pair in $PAIRS; do
+      local n="${pair%%:*}"
+      case " $UNC_CAPABLE_EXPERTS " in
+        *" $n "*) ;;
+        *)
+          echo "" >&2
+          echo "ERROR: numeric expert '$n' has no UncHead on the mm-mogu branch." >&2
+          echo "       It returns a plain tensor, so prob_expert=1 gives" >&2
+          echo "       \"TypeError: 'NoneType' object is not subscriptable\"." >&2
+          echo "       Uncertainty-capable experts: $UNC_CAPABLE_EXPERTS" >&2
+          exit 1 ;;
+      esac
+    done
+  fi
   for seed in $SEEDS; do
     for domain in $DOMAINS; do
       for pair in $PAIRS; do
@@ -305,11 +340,11 @@ case "$WHAT" in
     # One cheap run on the smallest grid cell. Proves: MM_TSFLIB_PATH resolves,
     # the data loads, the frozen LLM downloads and runs, joint training steps,
     # and a metrics.npy lands. ~ a few minutes.
-    echo "### smoke: Economy, DLinear x GPT2, h=6, agg=direct ###"
-    HORIZONS=6 DOMAINS=Economy PAIRS=DLinear:GPT2 sweep direct 0 none
+    echo "### smoke: Economy, PatchTST x GPT2, h=6, agg=direct ###"
+    HORIZONS=6 DOMAINS=Economy PAIRS=PatchTST:GPT2 sweep direct 0 none
     echo ""
     echo "### expect: test_online_gating_results/Economy_..._aggdirect_..._pl6_"
-    echo "###         ..._tsfn-expertsDLinear_tsft-expertsGPT2__norm-none__pe0__seed2021/"
+    echo "###         ..._tsfn-expertsPatchTST_tsft-expertsGPT2__norm-none__pe0__seed2021/"
     echo "###         containing metrics.npy"
     ;;
 

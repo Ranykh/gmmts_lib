@@ -34,23 +34,26 @@ computation:
     folder_path   used by the OFFLINE path to load pretrained experts. The online
                   path builds experts fresh in _build_model(), so it is inert here.
 
-Two consequences worth knowing:
+Three consequences worth knowing:
 
-  * With --expert_input_type prediction, Gating.py takes expert_dim = pred_len and
-    NEVER reads latent_dim. The value in this file becomes irrelevant.
   * agg_type=inv_var is a separate, latent-free path (Gating.py line 175), so the
-    expert projections are not used at all -- latent_dim is irrelevant there too,
-    whatever expert_input_type says.
-
-So: for the MM-MoGU (inv_var) runs this file just has to EXIST and have a row per
-expert. For the GMM-TS (direct) baseline, run with expert_input_type=prediction
-and the same holds. Only direct + latent needs a truthful latent_dim, and that is
-the one combination this script cannot give you without the prerequisite stage.
-It writes a documented placeholder and warns, rather than inventing a number and
-staying quiet about it.
+    expert projections are not built at all -- latent_dim is never read there.
+  * With --expert_input_type prediction, Gating.py takes expert_dim = pred_len and
+    also never reads latent_dim.
+  * On the mm-mogu branch, expert_input_type=latent and =prediction are
+    NUMERICALLY IDENTICAL for numeric experts, because none of those experts
+    returns a real latent -- see the note on TSFN_LATENT_IS_PRED_LEN below.
 
 The text-expert dimensions below are architectural facts, not guesses:
 GPT2/GPT2M/GPT2L/GPT2XL and BERT-base hidden sizes, and LLaMA-2-7B's 4096.
+
+NOT EVERY EXPERT CAN DO INVERSE-VARIANCE GATING
+-----------------------------------------------
+Only PatchTST and iTransformer were given an UncHead on mm-mogu. DLinear, FiLM,
+Informer and Reformer are unmodified from upstream and return a plain tensor, so
+prob_expert=1 crashes with "NoneType object is not subscriptable". This file will
+happily emit rows for them -- they are valid for agg_type=direct -- but an
+inverse-variance run must use PatchTST or iTransformer.
 """
 import argparse
 import csv
@@ -65,10 +68,23 @@ TSFT_DIM = {
     "Doc2Vec": 100, "ClosedLLM": 768,
 }
 
-# Placeholder for numeric experts: d_model, which is the natural latent width for
-# the TSLib-derived backbones. NOT verified against saved latents -- see the
-# module docstring. Only consulted when expert_input_type == "latent".
-TSFN_DEFAULT_LATENT = 512
+# Numeric-expert latent width. On the mm-mogu branch this is NOT d_model, and
+# that distinction was verified against the source rather than assumed:
+#
+#   * PatchTST/iTransformer with prob_expert=1 return (pred, sigma^2).
+#   * Every expert with prob_expert=0 returns a PLAIN TENSOR.
+#   * No expert on that branch returns (pred, latent).
+#
+# So exp_online_gating_long_term_forecasting._unpack_expert_result always falls
+# through to `m_latents = m_result.reshape(B, -1)` -- the "latent" IS the
+# flattened prediction, of width pred_len * c_out. run.py forces features='S',
+# so c_out = 1 and the width is exactly pred_len.
+#
+# Consequence: for numeric experts, expert_input_type=latent and
+# expert_input_type=prediction are numerically IDENTICAL on this branch.
+# Setting this to a fixed d_model (512) would build nn.Linear(512, gating_d_model)
+# and feed it a pred_len-wide vector -- a shape mismatch.
+TSFN_LATENT_IS_PRED_LEN = True
 
 TSFN_EXPERTS = ["Informer", "Reformer", "DLinear", "PatchTST", "FiLM"]
 
@@ -110,9 +126,11 @@ def build(domains, horizons, tsfn, tsft, tsfn_latent):
                 skipped.append(f"{domain} h={pl}: not a published horizon for "
                                f"{freq} domains {default_pls}")
             for expert in tsfn:
+                # pred_len, not d_model -- see the note on TSFN_LATENT_IS_PRED_LEN.
                 rows.append({
                     "domain": domain, "pl": pl, "expert": expert, "freq": freq,
-                    "latent_dim": tsfn_latent, "expert_type": "tsfn",
+                    "latent_dim": tsfn_latent if tsfn_latent else pl,
+                    "expert_type": "tsfn",
                     "folder_path": FOLDER_TEMPLATE.format(
                         expert_type="tsfn", domain=domain, pl=pl,
                         expert=expert, sl=sl, ll=ll),
@@ -142,8 +160,9 @@ def main():
                     help="default: every published horizon for each domain's frequency")
     ap.add_argument("--tsfn", nargs="*", default=TSFN_EXPERTS)
     ap.add_argument("--tsft", nargs="*", default=["GPT2", "BERT", "LLAMA2"])
-    ap.add_argument("--tsfn-latent", type=int, default=TSFN_DEFAULT_LATENT,
-                    help=f"placeholder numeric latent width (default {TSFN_DEFAULT_LATENT})")
+    ap.add_argument("--tsfn-latent", type=int, default=None,
+                    help="override the numeric latent width. Default: pred_len, "
+                         "which is what the mm-mogu experts actually produce.")
     ap.add_argument("--all-monthly", action="store_true",
                     help="every monthly domain, overriding --domains")
     ap.add_argument("--out", default="all_experts_config.csv")
@@ -176,19 +195,21 @@ def main():
     print("=" * 70)
     print("READ THIS BEFORE USING IT FOR A GMM-TS 'direct' BASELINE")
     print("=" * 70)
-    print(f"Text latent_dim values are real model hidden sizes and are correct.")
-    print(f"Numeric latent_dim is a PLACEHOLDER ({args.tsfn_latent}), not measured from")
-    print("saved latents. It is read only when --expert_input_type latent.")
+    print("Text latent_dim values are real model hidden sizes (GPT2/BERT 768,")
+    print("LLAMA2 4096) and are correct.")
     print()
-    print("Safe combinations with this file:")
-    print("  agg_type=inv_var   ANY expert_input_type   -- latent-free path, unused")
-    print("  agg_type=direct    --expert_input_type prediction  -- uses pred_len instead")
+    print("Numeric latent_dim is set to pred_len, which is what the mm-mogu experts")
+    print("ACTUALLY produce: none of them returns (pred, latent), so the exp falls back")
+    print("to flattening the prediction, and features='S' makes that pred_len wide.")
+    print("For numeric experts, expert_input_type=latent and =prediction are therefore")
+    print("numerically identical on this branch.")
     print()
-    print("NOT safe: agg_type=direct with --expert_input_type latent. That sizes a")
-    print("Linear from this placeholder and will either shape-mismatch or silently")
-    print("train the wrong projection width. To do that properly, run the")
-    print("save_tsfns_/save_tsfts_latents_predictions_*.sh prerequisite stage and")
-    print("then scripts/dataset_prep_scripts/prepare_all_expert_config.py.")
+    print("WHICH EXPERTS CAN DO agg_type=inv_var:")
+    print("  PatchTST, iTransformer   -- have an UncHead, return (pred, sigma^2)")
+    print("  DLinear, FiLM, Informer,")
+    print("  Reformer                 -- NOT modified on mm-mogu; they return a plain")
+    print("                              tensor, so prob_expert=1 crashes with")
+    print("                              \"NoneType object is not subscriptable\".")
     print("=" * 70)
     return 0
 
