@@ -376,9 +376,21 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
         # pooled text latent. Enables agg_type="inv_var".
         self.prob_expert = getattr(configs, 'prob_expert', 0)
         if self.prob_expert:
-            hidden = max(self.text_embedding_dim // 2, 8)
+            # The head is fed the POOLED `latent_text_emb`, and that tensor is
+            # MLP.forward's second return value `h` -- the second-to-last
+            # activation, whose width is mlp_sizes[-2] = d_llm // 8.
+            #
+            # It is NOT text_embedding_dim: that is mlp_sizes[-1], and
+            # run_online_gating.py line 184 sets `args.text_emb = args.pred_len`,
+            # so text_embedding_dim is the forecast width (6), not a text width.
+            # Sizing the head from it produced, at the first batch:
+            #   RuntimeError: mat1 and mat2 shapes cannot be multiplied
+            #                 (32x96 and 6x8)
+            # 96 = 768 // 8 for GPT2/BERT; LLAMA2 (d_llm 4096) gives 512.
+            text_latent_dim = int(self.d_llm / 8)
+            hidden = max(text_latent_dim // 2, 8)
             self.text_unc_head = nn.Sequential(
-                nn.Linear(self.text_embedding_dim, hidden),
+                nn.Linear(text_latent_dim, hidden),
                 nn.ReLU(),
                 nn.Linear(hidden, self.pred_len),
             ).to(self.device)
