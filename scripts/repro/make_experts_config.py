@@ -59,8 +59,30 @@ import argparse
 import csv
 import sys
 
-# Hidden sizes. These are the real model dimensions, so they are correct whenever
-# the text latent is the pooled last hidden state.
+# Raw LLM hidden sizes (d_llm).
+#
+# CAREFUL: these are NOT the width of the tensor the gate receives when
+# --expert_input_type latent. exp_online_gating_long_term_forecasting.py line 97
+# builds the text MLP as
+#
+#     mlp_sizes = [d_llm, d_llm // 8, text_embedding_dim]
+#
+# and MLP.forward returns `h` captured at i == len(layers)-2, i.e. AFTER the
+# first Linear. So `latent_text_emb` -- the tensor stored as <llm>_h_t and fed to
+# the gate's expert projection -- is d_llm // 8 wide, not d_llm:
+#
+#     GPT2 / BERT   768 // 8 =  96
+#     LLAMA2       4096 // 8 = 512
+#
+# Writing d_llm here builds nn.Linear(768, gating_d_model) and feeds it a 96-wide
+# vector, which fails at the first batch with
+#     RuntimeError: mat1 and mat2 shapes cannot be multiplied (32x96 and 768x256)
+# -- the same shape signature as the text_unc_head defect.
+#
+# Pass --tsft-div 8 to write the width the gate actually sees. It is only read
+# when expert_input_type=latent; with =prediction the projection is built from
+# pred_len and this column is never consulted, which is why the prediction sweeps
+# ran green with the wrong value in place.
 TSFT_DIM = {
     "BERT": 768,
     "GPT2": 768, "GPT2M": 1024, "GPT2L": 1280, "GPT2XL": 1600,
@@ -112,7 +134,7 @@ def freq_of(domain):
     return None
 
 
-def build(domains, horizons, tsfn, tsft, tsfn_latent):
+def build(domains, horizons, tsfn, tsft, tsfn_latent, tsft_div=1):
     rows, skipped = [], []
     for domain in domains:
         freq = freq_of(domain)
@@ -140,6 +162,9 @@ def build(domains, horizons, tsfn, tsft, tsfn_latent):
                 if dim is None:
                     skipped.append(f"{expert}: unknown text expert, no hidden size")
                     continue
+                # //8 gives the pooled MLP latent the gate is actually handed --
+                # see the note above TSFT_DIM.
+                dim = dim // tsft_div
                 rows.append({
                     "domain": domain, "pl": pl, "expert": expert, "freq": freq,
                     "latent_dim": dim, "expert_type": "tsft",
@@ -165,11 +190,18 @@ def main():
                          "which is what the mm-mogu experts actually produce.")
     ap.add_argument("--all-monthly", action="store_true",
                     help="every monthly domain, overriding --domains")
+    ap.add_argument("--tsft-div", type=int, default=1,
+                    help="divide the text hidden size by this. Use 8 for "
+                         "--expert_input_type latent: the gate is handed the "
+                         "pooled MLP activation of width d_llm//8, not d_llm. "
+                         "Leave at 1 for --expert_input_type prediction, where "
+                         "the column is never read.")
     ap.add_argument("--out", default="all_experts_config.csv")
     args = ap.parse_args()
 
     domains = FREQ_GROUPS["monthly"][0] if args.all_monthly else args.domains
-    rows, skipped = build(domains, args.horizons, args.tsfn, args.tsft, args.tsfn_latent)
+    rows, skipped = build(domains, args.horizons, args.tsfn, args.tsft,
+                          args.tsfn_latent, args.tsft_div)
 
     if not rows:
         sys.exit("nothing to write -- check --domains against MM-TSFlib/data/ "
@@ -195,8 +227,17 @@ def main():
     print("=" * 70)
     print("READ THIS BEFORE USING IT FOR A GMM-TS 'direct' BASELINE")
     print("=" * 70)
-    print("Text latent_dim values are real model hidden sizes (GPT2/BERT 768,")
-    print("LLAMA2 4096) and are correct.")
+    if args.tsft_div == 1:
+        print("Text latent_dim = raw d_llm (GPT2/BERT 768, LLAMA2 4096).")
+        print("This is correct ONLY for --expert_input_type prediction, where the")
+        print("column is never read. With =latent the gate is handed the pooled MLP")
+        print("activation of width d_llm//8 and this config will fail at the first")
+        print("batch. Regenerate with --tsft-div 8 for a latent run.")
+    else:
+        print(f"Text latent_dim = d_llm // {args.tsft_div}  (GPT2/BERT "
+              f"{768 // args.tsft_div}, LLAMA2 {4096 // args.tsft_div}).")
+        print("This is the width the gate actually receives, so it is the config")
+        print("for --expert_input_type latent.")
     print()
     print("Numeric latent_dim is set to pred_len, which is what the mm-mogu experts")
     print("ACTUALLY produce: none of them returns (pred, latent), so the exp falls back")
