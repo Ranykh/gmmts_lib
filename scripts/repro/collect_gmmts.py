@@ -252,10 +252,19 @@ def audit(rows, unparsed, incomplete, results_root):
         print("!! Re-run them through scripts/repro/run_mmmogu_sweep.sh, which renames.")
 
     # Collision check on the full experiment key.
+    #
+    # expert_input_type belongs in this key. It IS in the results folder name
+    # (run_online_gating.py writes eip<type> into `setting`), so latent and
+    # prediction runs never overwrite each other on disk -- but leaving it out
+    # here made every latent run look like a duplicate of its prediction twin
+    # and the collector refused to write. It is a real experimental variable:
+    # with =latent the gate receives the pooled LLM hidden state (d_llm//8),
+    # with =prediction it receives the pred_len-wide forecast.
     seen = {}
     for r in rows:
         k = (r["domain"], r["tsf_n"], r["tsf_t"], r["pred_len"],
-             r["agg_type"], r["inv_var_norm"], r["prob_expert"], r["seed"])
+             r["agg_type"], r["inv_var_norm"], r["prob_expert"],
+             r["expert_input_type"], r["seed"])
         seen.setdefault(k, []).append(r)
     dupes = {k: v for k, v in seen.items() if len(v) > 1}
     if dupes:
@@ -276,10 +285,18 @@ def audit(rows, unparsed, incomplete, results_root):
         print("\n!! git_dirty=yes -- results are not tied to the recorded SHA.")
 
     # Pairing check: the G4-vs-G3 claim needs both halves of each cell.
-    g3 = {(r["domain"], r["tsf_n"], r["tsf_t"], r["pred_len"], r["seed"])
-          for r in rows if r["agg_type"] == "direct"}
-    g4 = {(r["domain"], r["tsf_n"], r["tsf_t"], r["pred_len"], r["seed"])
-          for r in rows if r["method"] == "G4_IV"}
+    #
+    # expert_input_type is part of the key for the same reason it is part of the
+    # collision key, and here getting it wrong is worse than a refusal: m3 below
+    # is a dict comprehension, so with a latent G3 and a prediction G3 sharing a
+    # key the LAST one silently wins and the reported win rate compares
+    # G4(prediction) against G3(latent) -- two different gate inputs.
+    def _pk(r):
+        return (r["domain"], r["tsf_n"], r["tsf_t"], r["pred_len"],
+                r["expert_input_type"], r["seed"])
+
+    g3 = {_pk(r) for r in rows if r["agg_type"] == "direct"}
+    g4 = {_pk(r) for r in rows if r["method"] == "G4_IV"}
     both, only3, only4 = g3 & g4, g3 - g4, g4 - g3
     print(f"\npaired cells (G3 and G4 both present): {len(both)}")
     if only3 or only4:
@@ -287,10 +304,8 @@ def audit(rows, unparsed, incomplete, results_root):
         print("  An unpaired cell cannot support the apples-to-apples comparison.")
     if both:
         wins = 0
-        m3 = {(r["domain"], r["tsf_n"], r["tsf_t"], r["pred_len"], r["seed"]): r["mse"]
-              for r in rows if r["agg_type"] == "direct"}
-        m4 = {(r["domain"], r["tsf_n"], r["tsf_t"], r["pred_len"], r["seed"]): r["mse"]
-              for r in rows if r["method"] == "G4_IV"}
+        m3 = {_pk(r): r["mse"] for r in rows if r["agg_type"] == "direct"}
+        m4 = {_pk(r): r["mse"] for r in rows if r["method"] == "G4_IV"}
         for k in both:
             if m4[k] < m3[k]:
                 wins += 1
