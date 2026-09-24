@@ -15,6 +15,7 @@ import re
 from os.path import exists, join
 
 from gmm_ts.exp.exp_online_gating_long_term_forecasting import Exp_Online_Gating_Long_Term_Forecast
+from gmm_ts.exp.exp_online_mogu_long_term_forecasting import Exp_Online_MoGU_Long_Term_Forecast
 from gmm_ts.utils.print_args import print_gating_args
 
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
@@ -30,7 +31,10 @@ if __name__ == '__main__':
     parser.add_argument('--model_id', type=str, required=True, default='test', help='model id')
     parser.add_argument('--model', type=str, required=True, default='Autoformer',
                         help='model name, options: [Autoformer, Transformer, TimesNet]')
-    parser.add_argument('--agg_type', type=str, default='direct', help='the gating aggregation type: direct or latent')
+    parser.add_argument('--agg_type', type=str, default='direct', help='the gating aggregation type: direct, latent, hierarchical, or mogu (inverse-variance gate over all experts, no GatingNet)')
+    parser.add_argument('--unc_head_type', type=str, default='mlp', help='agg_type=mogu: uncertainty head architecture, mlp or linear (MoGU UncHead)')
+    parser.add_argument('--max_grad_norm', type=float, default=0, help='agg_type=mogu: clip gradient norm to this value; <=0 disables (MoGU default)')
+    parser.add_argument('--unc_learning_rate', type=float, default=1e-2, help='agg_type=mogu: learning rate shared by all uncertainty heads (same as the text projection, --learning_rate2)')
     parser.add_argument('--expert_input_type', type=str, default='latent', help='using the latents or the predictions of the experts as inputs')
 
     # expert config 
@@ -193,7 +197,7 @@ if __name__ == '__main__':
 
     print('Args in experiment:')
     print_gating_args(args)
-    Exp = Exp_Online_Gating_Long_Term_Forecast
+    Exp = Exp_Online_MoGU_Long_Term_Forecast if args.agg_type == 'mogu' else Exp_Online_Gating_Long_Term_Forecast
     
 
     if args.is_training:

@@ -50,7 +50,7 @@ def collect(runs_dir):
         names_file = os.path.join(result_dir, "expert_names.txt")
         if os.path.exists(names_file):
             names = open(names_file).read().split()
-            true = np.load(os.path.join(result_dir, "true.npy"))[..., 0]          # (N, H)
+            true = np.load(os.path.join(result_dir, "true_scaled.npy"))           # (N, H)
             expert_pred = np.load(os.path.join(result_dir, "expert_pred.npy"))    # (N, E, H)
             weights = np.load(os.path.join(result_dir, "gate_weights.npy"))       # (N, E, H)
             for e, name in enumerate(names):

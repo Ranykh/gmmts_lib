@@ -7,6 +7,7 @@
 #
 #   TAG     label for this arm, e.g. table1 or mogu  (becomes a folder under RUNS_DIR)
 #   AGG     direct | latent | hierarchical   (learned GatingNet, vanilla GMM-TS)
+#           mogu                             (inverse-variance gate over all experts)
 #   DOMAIN  Environment Energy Public_Health Algriculture Climate Economy Security SocialGood Traffic
 #   SEEDS   e.g. "2021" or "2021 2022 2023"
 #   extra   passed through to run_online_gating.py
@@ -21,7 +22,7 @@
 set -euo pipefail
 
 if [ $# -lt 4 ]; then
-  sed -n '2,20p' "$0"; exit 1
+  sed -n '2,21p' "$0"; exit 1
 fi
 TAG=$1; AGG=$2; DOMAIN=$3; SEEDS=$4; shift 4
 EXTRA=("$@")
@@ -33,7 +34,10 @@ EPOCHS=${EPOCHS:-10}
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 RUNS_DIR=$(mkdir -p "${RUNS_DIR:-$PWD/runs}" && cd "${RUNS_DIR:-$PWD/runs}" && pwd)
 CONFIG="$REPO/all_experts_config.csv"
-[ -f "$CONFIG" ] || { echo "missing $CONFIG -- run scripts/repro/make_online_experts_config.py first"; exit 1; }
+# the learned gate sizes its projections from this csv; the MoGU gate does not read it
+if [ "$AGG" != "mogu" ] && [ ! -f "$CONFIG" ]; then
+  echo "missing $CONFIG -- run scripts/repro/make_online_experts_config.py first"; exit 1
+fi
 
 case $DOMAIN in
   Environment)    DATA=NewYork_AQI_Day.csv;                      SL=96; LL=48; PLS="48 96 192 336" ;;

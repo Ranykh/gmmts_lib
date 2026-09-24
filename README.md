@@ -193,3 +193,25 @@ python scripts/repro/collect_online_results.py --runs_dir runs --out results_onl
 the online `setting` string omits the seed and would otherwise skip later seeds.
 With public MM-TSFlib the learned gate sees each numeric expert's forecast in place of a backbone
 latent; keep that in mind when comparing against the paper.
+
+## MoGU gate (`--agg_type mogu`, fork extension)
+
+Replaces the learned GatingNet with the MoGU inverse-variance gate over all experts (every
+numeric expert in `--model` plus the `--llm_model` expert):
+`w_e = (1/sigma_e^2) / sum_j (1/sigma_j^2)` per horizon step, trained with MoGU's loss
+`sum_e w_e * GaussianNLL(mu_e, sigma_e^2; y)`. Experts, text projection and one uncertainty head
+per expert are trained jointly; the LLM stays frozen. The gate has no parameters and needs no
+`all_experts_config.csv`.
+
+```bash
+TSFN=PatchTST,DLinear CUDA_VISIBLE_DEVICES=0 bash scripts/repro/run_online_sweep.sh mogu mogu Economy "2021 2022 2023"
+python tests/test_mogu.py   # CPU: checks the port against MoGU's reference formulas
+```
+
+- `gmm_ts/gating/mogu.py` -- uncertainty head, weights, loss, aleatoric/epistemic split (torch-only)
+- `gmm_ts/exp/exp_online_mogu_long_term_forecasting.py` -- online experiment with the MoGU gate
+- flags: `--unc_head_type mlp|linear`, `--unc_learning_rate` (default 1e-2, shared by all heads),
+  `--max_grad_norm` (default 0 = off, as in MoGU)
+- `test()` additionally saves `expert_pred`, `expert_sigma2`, `gate_weights`, `aleatoric`,
+  `epistemic`, `true_scaled` (.npy) and `expert_names.txt`, and prints each expert's own MSE and
+  mean gate weight.

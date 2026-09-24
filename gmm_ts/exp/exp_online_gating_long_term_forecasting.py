@@ -379,6 +379,11 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
         self.model = [m.to(self.device) for m in self.model]
         
         # Now initialize gating_module (needs self.model_names from _build_model)
+        self._build_gating_module(args)
+
+    def _build_gating_module(self, args):
+        """Build the learned GatingNet. Subclasses with a different gate override this
+        (e.g. the MoGU gate, which has no parameters and needs no expert config)."""
         all_expert_config_df = pd.read_csv(args.all_experts_config)
         experts = self.model_names + [args.llm_model]
         self.experiment_experts_config = {}
