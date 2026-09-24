@@ -166,3 +166,30 @@ For questions and discussions, open a GitHub issue in this repository.
 # License
 
 This project is licensed under the Apache License 2.0 — see the [LICENSE](LICENSE) file for details.
+
+## Reproducing with the public MM-TSFlib (fork notes)
+
+Against MM-TSFlib at the pinned commit `e789ce78`, every expert model returns a single
+tensor rather than `(forecast, latent)`. Two consequences:
+
+- `run.py --save_gating_dataset 1` (the latent-saving prep step behind
+  `prepare_all_expert_config.py` and the offline path) stops on the first batch with
+  `ValueError: too many values to unpack` in `gmm_ts/exp/exp_long_term_forecasting.py`.
+- The online path trains, then stopped in `vali()`/`test()`, which unpacked without the
+  single-tensor fallback that `train()` already has. Those two sites now use the same fallback.
+
+For the online path the expert config only supplies each expert's `latent_dim`, which is fixed
+by the online loop (`pred_len` for numeric experts, `llm_dim/8` for the text expert), so it is
+written directly:
+
+```bash
+python scripts/repro/make_online_experts_config.py --out_file all_experts_config.csv
+CUDA_VISIBLE_DEVICES=0 bash scripts/repro/run_online_sweep.sh table1 direct Economy "2021"
+python scripts/repro/collect_online_results.py --runs_dir runs --out results_online.csv
+```
+
+`run_online_sweep.sh` runs all four horizons of one domain with the paper's settings
+(PatchTST + GPT2 by default, as in Table 1) and gives every seed its own working directory, because
+the online `setting` string omits the seed and would otherwise skip later seeds.
+With public MM-TSFlib the learned gate sees each numeric expert's forecast in place of a backbone
+latent; keep that in mind when comparing against the paper.

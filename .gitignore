@@ -30,3 +30,7 @@ venv/
 .DS_Store
 .idea/
 .vscode/
+
+# scripts/repro outputs
+runs/
+results_online*.csv

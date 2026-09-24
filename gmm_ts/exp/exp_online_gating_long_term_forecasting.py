@@ -504,7 +504,14 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
                     else:
                         outputs, latent_num_emb = [], []
                         for m in self.model:
-                            m_outputs, m_latents = m(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                            m_result = m(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                            if isinstance(m_result, tuple) and len(m_result) == 2:
+                                m_outputs, m_latents = m_result
+                            else:
+                                # Model only returns outputs, use outputs as latents
+                                # (same fallback as train(); MM-TSFlib models return one tensor)
+                                m_outputs = m_result
+                                m_latents = m_result[:, -self.args.pred_len:, :]  # Use final predictions as latents
                             outputs.append(m_outputs)
                             latent_num_emb.append(m_latents)
                 f_dim = -1 if self.args.features == 'MS' else 0
@@ -823,7 +830,14 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
                     else:
                         outputs, latent_num_emb = [], []
                         for m in self.model:
-                            m_outputs, m_latents = m(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                            m_result = m(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                            if isinstance(m_result, tuple) and len(m_result) == 2:
+                                m_outputs, m_latents = m_result
+                            else:
+                                # Model only returns outputs, use outputs as latents
+                                # (same fallback as train(); MM-TSFlib models return one tensor)
+                                m_outputs = m_result
+                                m_latents = m_result[:, -self.args.pred_len:, :]  # Use final predictions as latents
                             outputs.append(m_outputs)
                             latent_num_emb.append(m_latents)
                 f_dim = -1 if self.args.features == 'MS' else 0
