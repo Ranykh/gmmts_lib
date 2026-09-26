@@ -389,6 +389,15 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         criterion = nn.MSELoss()
         return criterion
 
+    def _forward_expert(self, batch_x, batch_x_mark, dec_inp, batch_y_mark):
+        """(forecast, latent) from the expert. MM-TSFlib models at the pinned commit return
+        only the forecast; then the forecast stands in for the latent, as in the online
+        gating loop."""
+        out = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+        if isinstance(out, tuple) and len(out) == 2:
+            return out
+        return out, out[:, -self.args.pred_len:, :]
+
     def vali(self, vali_data, vali_loader, criterion):
         total_loss = []
         self.model.eval()
@@ -426,12 +435,12 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                         if self.args.output_attention:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
                         else:
-                            outputs, _ = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                            outputs, _ = self._forward_expert(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                 else:
                     if self.args.output_attention:
                         outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
                     else:
-                        outputs, _= self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                        outputs, _ = self._forward_expert(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                 f_dim = -1 if self.args.features == 'MS' else 0
                 outputs = outputs[:, -self.args.pred_len:, f_dim:]
                 if self.Doc2Vec==False:
@@ -547,12 +556,12 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                         if self.args.output_attention:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
                         else:
-                            outputs, _= self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                            outputs, _ = self._forward_expert(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                 else:
                     if self.args.output_attention:
                         outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
                     else:
-                        outputs, _ = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                        outputs, _ = self._forward_expert(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                 f_dim = -1 if self.args.features == 'MS' else 0
                 outputs = outputs[:, -self.args.pred_len:, f_dim:]
                 if self.Doc2Vec==False:
@@ -635,6 +644,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         
         preds = []
         trues = []
+        preds_upstream = []
         raw_inputs = []
         latent_num_embs = []
         latent_text_embs = []
@@ -681,12 +691,12 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                         if self.args.output_attention:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
                         else:
-                            outputs, latent_num_emb = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                            outputs, latent_num_emb = self._forward_expert(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                 else:
                     if self.args.output_attention:
                         outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
                     else:
-                        outputs, latent_num_emb = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                        outputs, latent_num_emb = self._forward_expert(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                 f_dim = -1 if self.args.features == 'MS' else 0
                 outputs = outputs[:, -self.args.pred_len:, f_dim:]
                 if self.Doc2Vec==False:
@@ -714,10 +724,14 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 else:
                     prompt_emb=prompt_emb.unsqueeze(-1)
                 prompt_y=norm(prompt_emb)+prior_y
-                outputs=(1-self.prompt_weight)*outputs+self.prompt_weight*prompt_y
+                # fused once, below, as in train()/vali() and in MM-TSFlib's test(); fusing here
+                # as well gave (1-pw)^2*numeric + pw*(2-pw)*text at test time for 0 < pw < 1
                 f_dim = -1 if self.args.features == 'MS' else 0
                 outputs = outputs[:, -self.args.pred_len:, :]
                 outputs=(1-self.prompt_weight)*outputs+self.prompt_weight*prompt_y
+                # diagnostic only: the prediction upstream's double fusion would have scored
+                outputs_upstream = (1-self.prompt_weight)*outputs+self.prompt_weight*prompt_y
+                preds_upstream.append(outputs_upstream[:, :, f_dim:].detach().cpu().numpy())
                 batch_y = batch_y[:, -self.args.pred_len:, :].to(self.device)
                 outputs = outputs.detach().cpu().numpy()
                 batch_y = batch_y.detach().cpu().numpy()
@@ -785,6 +799,12 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
         np.save(folder_path + 'pred.npy', preds)
         np.save(folder_path + 'true.npy', trues)
+        if preds_upstream and not self.args.inverse:
+            upstream = np.concatenate(preds_upstream, axis=0)
+            if upstream.shape == trues.shape:
+                up_mae, up_mse = metric(upstream, trues)[:2]
+                np.save(folder_path + 'metrics_upstream_test.npy', np.array([up_mae, up_mse]))
+                print('upstream double-fused test() would report mse:{}, mae:{}'.format(up_mse, up_mae))
 
         if save_gating_dataset:
             folder_path = './{}_gating_dataset/'.format(data_flag) + setting + '/'

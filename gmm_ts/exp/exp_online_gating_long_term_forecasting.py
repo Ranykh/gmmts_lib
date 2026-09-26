@@ -773,6 +773,8 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
         
         preds = []
         trues = []
+        # per-expert diagnostics (agg_type=direct): the gate's weights and each expert's forecast
+        gate_weights, expert_preds, trues_scaled = [], [], []
         folder_path = './{}_online_gating_results/'.format(data_flag) + setting + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
@@ -877,7 +879,15 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
                 
                 data = self.prepare_data_for_gating(batch_x, outputs, 
                                 latent_num_emb, prompt_y, latent_text_emb)
-                outputs = self.gating_module(data)   
+                if self.args.agg_type == 'direct':
+                    outputs, w = self.gating_module(data, return_w=True)
+                    gate_weights.append(w.detach().cpu().numpy())                       # B x |E| x pred_len
+                    expert_preds.append(torch.stack(
+                        [data[e + "_pred_y"][:, :, 0] for e in self.experiment_experts_config], dim=1
+                    ).detach().cpu().numpy())                                           # B x |E| x pred_len
+                    trues_scaled.append(batch_y[:, -self.args.pred_len:, -1].detach().cpu().numpy())
+                else:
+                    outputs = self.gating_module(data)
 
                 #outputs=(1-self.prompt_weight)*outputs+self.prompt_weight*prompt_y
                 
@@ -932,6 +942,12 @@ class Exp_Online_Gating_Long_Term_Forecast(Exp_Basic):
         np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
         np.save(folder_path + 'pred.npy', preds)
         np.save(folder_path + 'true.npy', trues)
+        if gate_weights:  # same diagnostic files as the MoGU experiment, for the collapse check
+            np.save(folder_path + 'gate_weights.npy', np.concatenate(gate_weights, axis=0))
+            np.save(folder_path + 'expert_pred.npy', np.concatenate(expert_preds, axis=0))
+            np.save(folder_path + 'true_scaled.npy', np.concatenate(trues_scaled, axis=0))
+            with open(folder_path + 'expert_names.txt', 'w') as fh:
+                fh.write("\n".join(self.experiment_experts_config) + "\n")
         
 
         return mse

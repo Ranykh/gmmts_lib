@@ -30,6 +30,7 @@ ranks experts by the text head alone. Measured on Economy pl=6, PatchTST+DLinear
 10 epochs: at 1e-4 / 1e-3 the numeric sigma^2 stayed at ~0.7 / ~0.5 and the weights were
 ~uniform; at 1e-2 PatchTST (best expert) got w=0.80, DLinear 0.15, GPT2 0.04.
 """
+import copy
 import os
 import time
 
@@ -159,7 +160,11 @@ class Exp_Online_MoGU_Long_Term_Forecast(Exp_Online_Gating_Long_Term_Forecast):
     # ----------------------------------------------------------------- train
     def vali(self, vali_data, vali_loader, criterion=None):
         """Mean MoGU loss. MoGU early-stops on its training objective, not on MSE."""
-        total_loss = []
+        return self._vali_both(vali_data, vali_loader)[0]
+
+    def _vali_both(self, vali_data, vali_loader):
+        """(mean MoGU loss, MSE of the gated forecast) in one pass."""
+        total_loss, total_mse = [], []
         self._set_train(False)
         with torch.no_grad():
             for batch_x, batch_y, batch_x_mark, batch_y_mark, index in vali_loader:
@@ -167,8 +172,9 @@ class Exp_Online_MoGU_Long_Term_Forecast(Exp_Online_Gating_Long_Term_Forecast):
                                                        batch_x_mark, batch_y_mark, index)
                 weights = inverse_variance_weights(sigma2)
                 total_loss.append(mogu_loss(mu, sigma2, weights, y).item())
+                total_mse.append(F.mse_loss((weights * mu).sum(dim=1), y).item())
         self._set_train(True)
-        return np.average(total_loss)
+        return np.average(total_loss), np.average(total_mse)
 
     def train(self, setting):
         train_data, train_loader = self._get_data(flag='train')
@@ -178,8 +184,13 @@ class Exp_Online_MoGU_Long_Term_Forecast(Exp_Online_Gating_Long_Term_Forecast):
         num_paths = [os.path.join('./online_gating_checkpoints/model/', setting, name)
                      for name in self.model_names]
         text_path = os.path.join('./online_gating_checkpoints/mlp/', setting)
-        for p in num_paths + [text_path]:
+        mse_root = os.path.join('./online_gating_checkpoints/mogu_best_vali_mse/', setting)
+        mse_paths = [os.path.join(mse_root, name) for name in self.model_names]
+        mse_text_path = os.path.join(mse_root, 'mlp')
+        for p in num_paths + [text_path] + mse_paths + [mse_text_path]:
             os.makedirs(p, exist_ok=True)
+        self._best_vali_mse = float("inf")
+        self._mse_ckpt = (mse_paths, mse_text_path)
 
         early_stopping = [EarlyStopping(patience=self.args.patience, verbose=True)
                           for _ in self.num_units]
@@ -208,6 +219,10 @@ class Exp_Online_MoGU_Long_Term_Forecast(Exp_Online_Gating_Long_Term_Forecast):
                 _, mu, sigma2, y = self._forward_batch(train_data, batch_x, batch_y,
                                                        batch_x_mark, batch_y_mark, index)
                 weights = inverse_variance_weights(sigma2)
+                if getattr(self.args, "mogu_detach_weights", 0):
+                    # ablation: variances learn only from each expert's own NLL (calibrated),
+                    # instead of also being pushed through the gate as in MoGU
+                    weights = weights.detach()
                 loss = mogu_loss(mu, sigma2, weights, y)
                 train_loss.append(loss.item())
 
@@ -229,8 +244,16 @@ class Exp_Online_MoGU_Long_Term_Forecast(Exp_Online_Gating_Long_Term_Forecast):
 
             print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
             train_loss = np.average(train_loss)
-            vali_loss = self.vali(vali_data, vali_loader)
+            vali_loss, vali_mse = self._vali_both(vali_data, vali_loader)
             test_loss = self.vali(test_data, test_loader)
+            print("\tgated vali MSE: {:.7f}".format(vali_mse))
+            # GMM-TS selects its checkpoint by the validation MSE of the gated forecast; keep that
+            # checkpoint too, so test() can report MoGU under both selection rules
+            if vali_mse < self._best_vali_mse:
+                self._best_vali_mse = vali_mse
+                for unit, path in zip(self.num_units, mse_paths):
+                    torch.save(unit.state_dict(), os.path.join(path, 'checkpoint.pth'))
+                torch.save(self.text_unit.state_dict(), os.path.join(mse_text_path, 'checkpoint.pth'))
             print("Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f} Test Loss: {4:.7f}"
                   " (MoGU weighted Gaussian NLL)".format(
                       epoch + 1, train_steps, train_loss, vali_loss, test_loss))
@@ -327,4 +350,33 @@ class Exp_Online_MoGU_Long_Term_Forecast(Exp_Online_Gating_Long_Term_Forecast):
             e_mse = float(np.mean((extra["expert_pred"][:, e] - extra["true_scaled"]) ** 2))
             print("    {:<14} mse={:.6f}  mean_w={:.3f}".format(
                 name, e_mse, float(extra["gate_weights"][:, e].mean())))
+
+        # Same test set under GMM-TS's selection rule: the checkpoint with the best validation
+        # MSE of the gated forecast. metrics.npy above stays MoGU's own rule (best validation
+        # NLL); this file separates the effect of the gate from the effect of model selection.
+        if getattr(self, "_mse_ckpt", None) is not None:
+            keep = ([copy.deepcopy(u.state_dict()) for u in self.num_units],
+                    copy.deepcopy(self.text_unit.state_dict()))
+            mse_paths, mse_text_path = self._mse_ckpt
+            for unit, path in zip(self.num_units, mse_paths):
+                unit.load_state_dict(torch.load(os.path.join(path, 'checkpoint.pth')))
+            self.text_unit.load_state_dict(torch.load(os.path.join(mse_text_path, 'checkpoint.pth')))
+            sel_pred, sel_true, sel_w = [], [], []
+            self._set_train(False)
+            with torch.no_grad():
+                for batch_x, batch_y, batch_x_mark, batch_y_mark, index in test_loader:
+                    _, mu, sigma2, y = self._forward_batch(test_data, batch_x, batch_y,
+                                                           batch_x_mark, batch_y_mark, index)
+                    weights = inverse_variance_weights(sigma2)
+                    sel_pred.append((weights * mu).sum(dim=1).cpu().numpy())
+                    sel_true.append(y.cpu().numpy())
+                    sel_w.append(weights[..., 0].cpu().numpy())
+            sel_mae, sel_mse = metric(np.concatenate(sel_pred), np.concatenate(sel_true))[:2]
+            np.save(folder_path + 'metrics_select_mse.npy', np.array([sel_mae, sel_mse]))
+            np.save(folder_path + 'gate_weights_select_mse.npy', np.concatenate(sel_w))
+            print('checkpoint selected by gated vali MSE (GMM-TS rule): mse:{}, mae:{}'.format(
+                sel_mse, sel_mae))
+            for unit, state in zip(self.num_units, keep[0]):
+                unit.load_state_dict(state)
+            self.text_unit.load_state_dict(keep[1])
         return mse

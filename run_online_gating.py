@@ -34,6 +34,7 @@ if __name__ == '__main__':
     parser.add_argument('--agg_type', type=str, default='direct', help='the gating aggregation type: direct, latent, hierarchical, or mogu (inverse-variance gate over all experts, no GatingNet)')
     parser.add_argument('--unc_head_type', type=str, default='mlp', help='agg_type=mogu: uncertainty head architecture, mlp or linear (MoGU UncHead)')
     parser.add_argument('--max_grad_norm', type=float, default=0, help='agg_type=mogu: clip gradient norm to this value; <=0 disables (MoGU default)')
+    parser.add_argument('--mogu_detach_weights', type=int, default=0, help='agg_type=mogu ablation: 1 = detach the gate weights in the training loss (MoGU default 0)')
     parser.add_argument('--unc_learning_rate', type=float, default=1e-2, help='agg_type=mogu: learning rate shared by all uncertainty heads (same as the text projection, --learning_rate2)')
     parser.add_argument('--expert_input_type', type=str, default='latent', help='using the latents or the predictions of the experts as inputs')
 

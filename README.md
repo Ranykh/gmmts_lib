@@ -215,3 +215,32 @@ python tests/test_mogu.py   # CPU: checks the port against MoGU's reference form
 - `test()` additionally saves `expert_pred`, `expert_sigma2`, `gate_weights`, `aleatoric`,
   `epistemic`, `true_scaled` (.npy) and `expert_names.txt`, and prints each expert's own MSE and
   mean gate weight.
+
+## Table 1 matrix: Unimodal, Time-MMD, GMM-TS and MM-MoGU in one command (fork extension)
+
+```bash
+python scripts/repro/run_table1_matrix.py --gpus 2,5 --seeds 2021 2022 2023
+```
+
+Runs every Table 1 domain and horizon for four arms from this repository, on identical data,
+splits and seeds (experts: PatchTST + GPT2, as in Table 1), then writes
+`runs/table1_matrix/table1_matrix{_summary.csv,_runs.csv,.xlsx}`:
+
+| arm | entry point | method |
+|---|---|---|
+| `unimodal` | `run.py --prompt_weight 0` | numeric expert alone |
+| `timemmd` | `run.py --prompt_weight pw` | Time-MMD fusion; one run per `--timemmd_pw`, pw picked per domain on validation MSE |
+| `gmmts` | `run_online_gating.py --agg_type direct` | GMM-TS learned gate |
+| `mogu` | `run_online_gating.py --agg_type mogu` | MM-MoGU inverse-variance gate |
+| `mogu_detached` (opt-in) | `... --mogu_detach_weights 1` | ablation: gate weights detached in the loss |
+
+Each job runs in its own directory with `run.json` + `log.txt`; re-running the command skips
+finished jobs. Two fixes on the `run.py` path make Time-MMD usable here:
+- expert calls unpack through `_forward_expert()`, which accepts MM-TSFlib's single-tensor return;
+- `test()` applied the Time-MMD fusion twice (MM-TSFlib applies it once), so for `0 < pw < 1` it
+  scored `(1-pw)^2*numeric + pw*(2-pw)*text`. It now fuses once; the double-fused score is still
+  saved as `metrics_upstream_test.npy` for comparison with published numbers.
+
+Diagnostics saved per run: gate weights and per-expert forecasts for both gates (collapse
+check, gate vs best single expert), and for MoGU a second test score from the checkpoint with the
+best validation MSE of the gated forecast (`metrics_select_mse.npy`), GMM-TS's selection rule.

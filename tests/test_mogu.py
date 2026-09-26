@@ -114,6 +114,47 @@ def test_zero_variance_is_guarded_like_the_reference():
     assert torch.isfinite(mogu.mogu_loss(mu, sigma2, w, y))
 
 
+
+def _train_two_experts(detach_weights, steps=400):
+    """Two fixed experts, one accurate (error std 0.1) and one poor (std 1.0), each with its
+    own MoGU head, trained only through mogu_loss. Returns (w_good, sigma2_good, sigma2_bad)."""
+    torch.manual_seed(0)
+    b, h, d = 256, 6, 8
+    heads = [mogu.UncertaintyHead(d, h) for _ in range(2)]
+    opt = torch.optim.Adam([p for hd in heads for p in hd.parameters()], lr=1e-2)
+    for _ in range(steps):
+        x, y = torch.randn(b, d), torch.randn(b, h, 1)
+        mu = torch.stack([y + 0.1 * torch.randn_like(y), y + 1.0 * torch.randn_like(y)], dim=1)
+        s2 = torch.stack([hd(x) for hd in heads], dim=1)
+        w = mogu.inverse_variance_weights(s2)
+        loss = mogu.mogu_loss(mu, s2, w.detach() if detach_weights else w, y)
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
+    with torch.no_grad():
+        s2 = torch.stack([hd(x) for hd in heads], dim=1)
+        w = mogu.inverse_variance_weights(s2)
+    return w[:, 0].mean().item(), s2[:, 0].mean().item(), s2[:, 1].mean().item()
+
+
+def test_gate_learns_the_accurate_expert():
+    """MoGU as published (weights attached): the gate picks the accurate expert and that
+    expert's variance is calibrated. The poor expert's variance is NOT calibrated -- the loss
+    inflates it (~8x here) to push its weight further down. Known property of MoGU's loss."""
+    w_good, s2_good, s2_bad = _train_two_experts(detach_weights=False)
+    assert w_good > 0.99
+    assert abs(s2_good - 0.01) < 0.002
+    assert s2_bad > 3.0
+
+
+def test_detached_weights_calibrate_every_expert():
+    """--mogu_detach_weights: both variances calibrated, and the gate sits at the
+    inverse-variance optimum (1/0.01) / (1/0.01 + 1/1) = 100/101."""
+    w_good, s2_good, s2_bad = _train_two_experts(detach_weights=True)
+    assert abs(s2_good - 0.01) < 0.002 and abs(s2_bad - 1.0) < 0.1
+    assert abs(w_good - 100 / 101) < 0.005
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
