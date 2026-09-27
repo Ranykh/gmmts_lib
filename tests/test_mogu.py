@@ -155,6 +155,55 @@ def test_detached_weights_calibrate_every_expert():
     assert abs(w_good - 100 / 101) < 0.005
 
 
+
+def test_mogu_mse_loss_value_and_gradient_separation():
+    """--mogu_loss mse: forecasts get only the GMM-TS MSE terms, heads only the NLL term."""
+    mu0, s20, y = _inputs(5)
+    mu, s2 = mu0.clone().requires_grad_(True), s20.clone().requires_grad_(True)
+    w = mogu.inverse_variance_weights(s2)
+    loss = mogu.mogu_mse_loss(mu, s2, w, y, n_numeric=2)
+
+    # value, written out by hand
+    import torch.nn.functional as F
+    y_hat = (w.detach() * mu0).sum(dim=1)
+    mse_terms = F.mse_loss(y_hat, y) + F.mse_loss(mu0[:, 0], y) + F.mse_loss(mu0[:, 1], y)
+    nll = torch.stack([nn.GaussianNLLLoss()(mu0[:, e], y, s20[:, e]) for e in range(E)]).sum()
+    assert torch.allclose(loss, mse_terms + nll)
+
+    loss.backward()
+    # forecasts: exactly the gradient of the MSE terms
+    mu_ref = mu0.clone().requires_grad_(True)
+    y_hat = (w.detach() * mu_ref).sum(dim=1)
+    (F.mse_loss(y_hat, y) + F.mse_loss(mu_ref[:, 0], y) + F.mse_loss(mu_ref[:, 1], y)).backward()
+    assert torch.allclose(mu.grad, mu_ref.grad)
+    # variance heads: exactly the gradient of the NLL term
+    s2_ref = s20.clone().requires_grad_(True)
+    torch.stack([nn.GaussianNLLLoss()(mu0[:, e], y, s2_ref[:, e]) for e in range(E)]).sum().backward()
+    assert torch.allclose(s2.grad, s2_ref.grad)
+
+
+def test_mogu_mse_calibrates_every_expert():
+    """Same synthetic pair as above, trained with mogu_mse_loss: both variances calibrated
+    and the gate at the inverse-variance optimum 100/101 -- no collapse."""
+    torch.manual_seed(0)
+    b, h, d = 256, 6, 8
+    heads = [mogu.UncertaintyHead(d, h) for _ in range(2)]
+    opt = torch.optim.Adam([q for hd in heads for q in hd.parameters()], lr=1e-2)
+    for _ in range(400):
+        x, y = torch.randn(b, d), torch.randn(b, h, 1)
+        mu = torch.stack([y + 0.1 * torch.randn_like(y), y + 1.0 * torch.randn_like(y)], dim=1)
+        s2 = torch.stack([hd(x) for hd in heads], dim=1)
+        loss = mogu.mogu_mse_loss(mu, s2, mogu.inverse_variance_weights(s2), y, n_numeric=1)
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
+    with torch.no_grad():
+        s2 = torch.stack([hd(x) for hd in heads], dim=1)
+        w = mogu.inverse_variance_weights(s2)
+    assert abs(s2[:, 0].mean().item() - 0.01) < 0.002 and abs(s2[:, 1].mean().item() - 1.0) < 0.1
+    assert abs(w[:, 0].mean().item() - 100 / 101) < 0.005
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

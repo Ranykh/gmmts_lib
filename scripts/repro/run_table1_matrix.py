@@ -10,6 +10,8 @@ MM-MoGU, all from this repository, on the same data, splits, horizons and seeds.
   gmmts          run_online_gating.py, direct     GMM-TS learned gate (Table 1 "GMM-TS")
   mogu           run_online_gating.py, mogu       MM-MoGU inverse-variance gate
   mogu_detached  (opt-in) mogu + --mogu_detach_weights 1
+  mogu_mse       (opt-in) mogu + --mogu_loss mse: forecasts trained exactly as in GMM-TS,
+                 variance heads by NLL only -- the gate is the only difference from gmmts
 
 Experts default to Table 1's pair: --tsfn PatchTST, --llm GPT2.
 
@@ -57,7 +59,7 @@ DOMAINS = {
 }
 # relative run time (batches per run), only used to start the longest jobs first
 COST = {"daily": 30.0, "weekly": 4.0, "monthly": 1.0}
-ARMS = ("unimodal", "timemmd", "gmmts", "mogu", "mogu_detached")
+ARMS = ("unimodal", "timemmd", "gmmts", "mogu", "mogu_detached", "mogu_mse")
 
 
 class Job:
@@ -108,6 +110,8 @@ def build_cmd(job, a, mm_path, config):
                "--all_experts_config", str(config)]
         if job.arm == "mogu_detached":
             cmd += ["--mogu_detach_weights", "1"]
+        if job.arm == "mogu_mse":
+            cmd += ["--mogu_loss", "mse"]
     return cmd + common + shlex.split(a.extra)
 
 

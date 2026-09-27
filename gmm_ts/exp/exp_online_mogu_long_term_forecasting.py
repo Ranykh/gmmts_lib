@@ -42,10 +42,16 @@ import torch.nn.functional as F
 from gmm_ts.exp.exp_online_gating_long_term_forecasting import (
     Exp_Online_Gating_Long_Term_Forecast, norm)
 from gmm_ts.gating.mogu import (UncertaintyHead, aleatoric_epistemic,
-                                inverse_variance_weights, mogu_loss)
+                                inverse_variance_weights, mogu_loss, mogu_mse_loss)
 from gmm_ts.utils.metrics import metric
 from gmm_ts.utils.tools import EarlyStopping, visual
 
+# --mogu_loss selects the training objective:
+#   nll (default) MoGU as published: sum_e w_e * GaussianNLL_e, early stopping on it
+#   mse           GMM-TS's objective on the forecasts (gated MSE + numeric experts' own MSE,
+#                 weights detached), NLL only for the variance heads (forecasts detached),
+#                 early stopping on the gated validation MSE as GMM-TS does. Everything but
+#                 the gate then matches vanilla GMM-TS, which isolates the gate's effect.
 PROMPT = ("<|start_prompt|Make predictions about the future based on the following "
           "information: {}<|<end_prompt>|>")
 
@@ -57,6 +63,8 @@ class Exp_Online_MoGU_Long_Term_Forecast(Exp_Online_Gating_Long_Term_Forecast):
             raise ValueError("agg_type=mogu does not support --use_amp")
         if args.output_attention:
             raise ValueError("agg_type=mogu does not support --output_attention")
+        if getattr(args, "mogu_loss", "nll") not in ("nll", "mse"):
+            raise ValueError("--mogu_loss must be nll or mse")
         if args.pool_type not in ("avg", "max", "min"):
             raise ValueError("agg_type=mogu supports --pool_type avg|max|min, "
                              "got {}".format(args.pool_type))
@@ -85,6 +93,10 @@ class Exp_Online_MoGU_Long_Term_Forecast(Exp_Online_Gating_Long_Term_Forecast):
         # experts and text MLP keep the parent's optimizers and learning rates
         params = list(self.num_unc_heads.parameters()) + list(self.text_unc_head.parameters())
         return torch.optim.Adam(params, lr=getattr(self.args, "unc_learning_rate", 1e-2))
+
+    @property
+    def _mse_mode(self):
+        return getattr(self.args, "mogu_loss", "nll") == "mse"
 
     def _set_train(self, mode):
         for u in self.num_units:
@@ -190,7 +202,8 @@ class Exp_Online_MoGU_Long_Term_Forecast(Exp_Online_Gating_Long_Term_Forecast):
         for p in num_paths + [text_path] + mse_paths + [mse_text_path]:
             os.makedirs(p, exist_ok=True)
         self._best_vali_mse = float("inf")
-        self._mse_ckpt = (mse_paths, mse_text_path)
+        # in mse mode the early-stopping checkpoint already is the best-gated-MSE one
+        self._mse_ckpt = None if self._mse_mode else (mse_paths, mse_text_path)
 
         early_stopping = [EarlyStopping(patience=self.args.patience, verbose=True)
                           for _ in self.num_units]
@@ -219,11 +232,14 @@ class Exp_Online_MoGU_Long_Term_Forecast(Exp_Online_Gating_Long_Term_Forecast):
                 _, mu, sigma2, y = self._forward_batch(train_data, batch_x, batch_y,
                                                        batch_x_mark, batch_y_mark, index)
                 weights = inverse_variance_weights(sigma2)
-                if getattr(self.args, "mogu_detach_weights", 0):
-                    # ablation: variances learn only from each expert's own NLL (calibrated),
-                    # instead of also being pushed through the gate as in MoGU
-                    weights = weights.detach()
-                loss = mogu_loss(mu, sigma2, weights, y)
+                if self._mse_mode:
+                    loss = mogu_mse_loss(mu, sigma2, weights, y, n_numeric=len(self.model))
+                else:
+                    if getattr(self.args, "mogu_detach_weights", 0):
+                        # ablation: variances learn only from each expert's own NLL
+                        # (calibrated), instead of also being pushed through the gate as in MoGU
+                        weights = weights.detach()
+                    loss = mogu_loss(mu, sigma2, weights, y)
                 train_loss.append(loss.item())
 
                 if (i + 1) % 100 == 0:
@@ -257,9 +273,11 @@ class Exp_Online_MoGU_Long_Term_Forecast(Exp_Online_Gating_Long_Term_Forecast):
             print("Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f} Test Loss: {4:.7f}"
                   " (MoGU weighted Gaussian NLL)".format(
                       epoch + 1, train_steps, train_loss, vali_loss, test_loss))
+            # MoGU stops on its own objective; --mogu_loss mse stops like GMM-TS, on gated MSE
+            stop_on = vali_mse if self._mse_mode else vali_loss
             for es, unit, path in zip(early_stopping, self.num_units, num_paths):
-                es(vali_loss, unit, path)
-            early_stopping_text(vali_loss, self.text_unit, text_path)
+                es(stop_on, unit, path)
+            early_stopping_text(stop_on, self.text_unit, text_path)
             if any(es.early_stop for es in early_stopping):
                 print("Early stopping")
                 break

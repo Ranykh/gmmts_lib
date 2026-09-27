@@ -233,6 +233,7 @@ splits and seeds (experts: PatchTST + GPT2, as in Table 1), then writes
 | `gmmts` | `run_online_gating.py --agg_type direct` | GMM-TS learned gate |
 | `mogu` | `run_online_gating.py --agg_type mogu` | MM-MoGU inverse-variance gate |
 | `mogu_detached` (opt-in) | `... --mogu_detach_weights 1` | ablation: gate weights detached in the loss |
+| `mogu_mse` (opt-in) | `... --mogu_loss mse` | forecasts trained exactly as in GMM-TS (gated MSE + numeric experts' own MSE, weights detached), variance heads by NLL only, early stopping on gated validation MSE -- the gate is the only difference from `gmmts` |
 
 Each job runs in its own directory with `run.json` + `log.txt`; re-running the command skips
 finished jobs. Two fixes on the `run.py` path make Time-MMD usable here:

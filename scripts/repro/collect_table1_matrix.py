@@ -39,6 +39,10 @@ PAPER = pd.DataFrame(
     columns=["domain", "Domain", "paper_unimodal", "paper_gpt4mts", "paper_timemmd", "paper_gmmts"])
 
 
+MOGU_VARIANTS = ("mogu", "mogu_mse", "mogu_detached")
+LABELS = {"mogu": "MM-MoGU", "mogu_mse": "MoGU(MSE)", "mogu_detached": "MoGU(detach)"}
+
+
 def _gate_stats(folder, weights_file="gate_weights.npy"):
     """Gate weight spread and gated-vs-best-expert, from the files test() saves."""
     wf = folder / weights_file
@@ -132,6 +136,7 @@ def summarize(runs):
         "mogu": (runs[runs.arm == "mogu"], "mse"),
         "mogu_select_mse": (runs[runs.arm == "mogu"], "mse_select_mse"),
         "mogu_detached": (runs[runs.arm == "mogu_detached"], "mse"),
+        "mogu_mse": (runs[runs.arm == "mogu_mse"], "mse"),
     }
     rows = []
     for d in PAPER.domain:
@@ -142,12 +147,13 @@ def summarize(runs):
             row[name + "_std"] = std
             row[name + "_runs"] = n_runs
         row["timemmd_pw"] = chosen.get(d, np.nan)
-        g, m = runs[(runs.arm == "gmmts") & (runs.domain == d)], runs[(runs.arm == "mogu") & (runs.domain == d)]
-        pr = paired(m, g)
-        row["mogu_vs_gmmts_%"] = 100 * (row["mogu"] / row["gmmts"] - 1) if row["gmmts"] else np.nan
-        row["mogu_wins"] = "{}/{}".format(pr["wins"], pr["pairs"]) if pr else ""
-        row["mogu_vs_gmmts_p"] = pr.get("p_paired", np.nan)
-        for arm in ("gmmts", "mogu"):
+        g = runs[(runs.arm == "gmmts") & (runs.domain == d)]
+        for v in MOGU_VARIANTS:
+            pr = paired(runs[(runs.arm == v) & (runs.domain == d)], g)
+            row[v + "_vs_gmmts_%"] = 100 * (row[v] / row["gmmts"] - 1) if row["gmmts"] else np.nan
+            row[v + "_wins"] = "{}/{}".format(pr["wins"], pr["pairs"]) if pr else ""
+            row[v + "_vs_gmmts_p"] = pr.get("p_paired", np.nan)
+        for arm in ("gmmts",) + MOGU_VARIANTS:
             sub = runs[(runs.arm == arm) & (runs.domain == d)]
             row["gate_w_std_" + arm] = sub["gate_w_std"].mean() if "gate_w_std" in sub else np.nan
             row["beats_best_expert_" + arm] = (
@@ -186,19 +192,24 @@ def main(argv=None):
                          "paper GMM-TS": summary.paper_gmmts})
     for name, label in [("unimodal", "Unimodal"), ("timemmd", "TimeMMD"), ("gmmts", "GMM-TS"),
                         ("mogu", "MM-MoGU"), ("mogu_select_mse", "MoGU(selMSE)"),
-                        ("mogu_detached", "MoGU(detach)")]:
+                        ("mogu_mse", "MoGU(MSE)"), ("mogu_detached", "MoGU(detach)")]:
         if summary[name + "_runs"].sum() > 0:
             view[label] = [_fmt(m, s) for m, s in zip(summary[name], summary[name + "_std"])]
     view["pw"] = summary.timemmd_pw
     diag = pd.DataFrame({"Domain": summary.Domain,
                          "TimeMMD upstream test()": [_fmt(m, s) for m, s in zip(summary.timemmd_upstream_test, summary.timemmd_upstream_test_std)],
-                         "MoGU vs GMM-TS %": summary["mogu_vs_gmmts_%"].round(1),
-                         "MoGU wins": summary.mogu_wins, "paired p": summary.mogu_vs_gmmts_p.round(3),
                          "w std GMM-TS": summary.gate_w_std_gmmts.round(3),
-                         "w std MoGU": summary.gate_w_std_mogu.round(3),
-                         "GMM-TS beats best expert": summary.beats_best_expert_gmmts,
-                         "MoGU beats best expert": summary.beats_best_expert_mogu,
-                         "seeds": summary.seeds})
+                         "GMM-TS beats best expert": summary.beats_best_expert_gmmts})
+    for v in MOGU_VARIANTS:
+        if summary[v + "_runs"].sum() == 0:
+            continue
+        lab = LABELS[v]
+        diag[lab + " vs GMM-TS %"] = summary[v + "_vs_gmmts_%"].round(1)
+        diag[lab + " wins"] = summary[v + "_wins"]
+        diag[lab + " p"] = summary[v + "_vs_gmmts_p"].round(3)
+        diag["w std " + lab] = summary["gate_w_std_" + v].round(3)
+        diag[lab + " beats best expert"] = summary["beats_best_expert_" + v]
+    diag["seeds"] = summary.seeds
     with pd.option_context("display.width", 250, "display.max_columns", 30):
         print("\nTest MSE per domain, mean over horizons (± std over seeds). Experts: {} + {}.".format(
             runs.tsfn.iloc[0], runs.llm.iloc[0]))

@@ -63,6 +63,26 @@ def mogu_loss(mu: torch.Tensor, sigma2: torch.Tensor, weights: torch.Tensor,
     return (nll * weights).sum(dim=1).mean()
 
 
+
+def mogu_mse_loss(mu: torch.Tensor, sigma2: torch.Tensor, weights: torch.Tensor,
+                  y: torch.Tensor, n_numeric: int) -> torch.Tensor:
+    """Inverse-variance gate on experts trained with GMM-TS's objective (the `mogu_mse` arm).
+
+    Forecasts get exactly the terms vanilla GMM-TS trains with -- MSE of the gated forecast
+    plus each numeric expert's own MSE -- with the gate weights detached, so no forecast is
+    trained to win or lose weight. Variance heads get only the Gaussian NLL of their expert's
+    detached forecast, unweighted, so each sigma^2 is fitted to its own expert's error.
+    Gradients therefore separate cleanly: forecasts <- MSE terms, heads <- NLL term.
+
+    mu, sigma2, weights: (B, E, H, C) with the numeric experts first; y: (B, H, C).
+    """
+    y_hat = (weights.detach() * mu).sum(dim=1)
+    loss = F.mse_loss(y_hat, y)
+    for e in range(n_numeric):
+        loss = loss + F.mse_loss(mu[:, e], y)
+    nll = F.gaussian_nll_loss(mu.detach(), y.unsqueeze(1).expand_as(mu), sigma2, reduction="none")
+    return loss + nll.mean(dim=(0, 2, 3)).sum()
+
 def aleatoric_epistemic(mu: torch.Tensor, sigma2: torch.Tensor, weights: torch.Tensor):
     """MoGU's uncertainty split of the mixture. Inputs (B, E, H, C); outputs (B, H, C).
 
