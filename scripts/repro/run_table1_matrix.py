@@ -9,9 +9,9 @@ MM-MoGU, all from this repository, on the same data, splits, horizons and seeds.
                                                   pw per domain on validation MSE
   gmmts          run_online_gating.py, direct     GMM-TS learned gate (Table 1 "GMM-TS")
   mogu           run_online_gating.py, mogu       MM-MoGU inverse-variance gate
+  mogu_mse       mogu + --mogu_loss mse: forecasts trained exactly as in GMM-TS, variance
+                 heads by NLL only -- the gate is the only difference from gmmts
   mogu_detached  (opt-in) mogu + --mogu_detach_weights 1
-  mogu_mse       (opt-in) mogu + --mogu_loss mse: forecasts trained exactly as in GMM-TS,
-                 variance heads by NLL only -- the gate is the only difference from gmmts
 
 Experts default to Table 1's pair: --tsfn PatchTST, --llm GPT2.
 
@@ -147,7 +147,7 @@ def main(argv=None):
     p.add_argument("--jobs_per_gpu", type=int, default=2,
                    help="processes per card; runs are small and tokenizer (CPU) bound")
     p.add_argument("--seeds", nargs="+", type=int, default=[2021, 2022, 2023])
-    p.add_argument("--arms", nargs="+", default=["unimodal", "timemmd", "gmmts", "mogu"],
+    p.add_argument("--arms", nargs="+", default=["unimodal", "timemmd", "gmmts", "mogu", "mogu_mse"],
                    choices=ARMS)
     p.add_argument("--domains", nargs="+", default=list(DOMAINS), choices=list(DOMAINS))
     p.add_argument("--horizons", nargs="+", type=int, default=None,

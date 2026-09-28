@@ -9,9 +9,16 @@ Only the gate and the loss change:
   GMM-TS : y_hat = sum_e softmax(GatingNet(x, latents))_e * mu_e
            loss  = MSE(y_hat, y) + sum_numeric MSE(mu_e, y)
   MoGU   : y_hat = sum_e w_e * mu_e,   w_e = (1/sigma_e^2) / sum_j (1/sigma_j^2)
-           loss  = sum_e w_e * GaussianNLL(mu_e, sigma_e^2; y)
 
 for any number of experts: every numeric expert in --model plus the --llm_model expert.
+
+Training objective (--mogu_loss):
+  nll (default)  MoGU as published: sum_e w_e * GaussianNLL(mu_e, sigma_e^2; y); early
+                 stopping on it. --mogu_detach_weights 1 detaches w_e in this loss (ablation).
+  mse            GMM-TS's objective on the forecasts (gated MSE + numeric experts' own MSE,
+                 w detached), GaussianNLL only for the variance heads (forecasts detached);
+                 early stopping on the gated validation MSE, as GMM-TS. Everything except the
+                 gate then matches vanilla GMM-TS, which isolates the gate's effect.
 
 One uncertainty head per expert (MoGU's UncHead architecture), all trained jointly with
 the experts (the LLM stays frozen):
@@ -46,12 +53,6 @@ from gmm_ts.gating.mogu import (UncertaintyHead, aleatoric_epistemic,
 from gmm_ts.utils.metrics import metric
 from gmm_ts.utils.tools import EarlyStopping, visual
 
-# --mogu_loss selects the training objective:
-#   nll (default) MoGU as published: sum_e w_e * GaussianNLL_e, early stopping on it
-#   mse           GMM-TS's objective on the forecasts (gated MSE + numeric experts' own MSE,
-#                 weights detached), NLL only for the variance heads (forecasts detached),
-#                 early stopping on the gated validation MSE as GMM-TS does. Everything but
-#                 the gate then matches vanilla GMM-TS, which isolates the gate's effect.
 PROMPT = ("<|start_prompt|Make predictions about the future based on the following "
           "information: {}<|<end_prompt>|>")
 
@@ -196,14 +197,19 @@ class Exp_Online_MoGU_Long_Term_Forecast(Exp_Online_Gating_Long_Term_Forecast):
         num_paths = [os.path.join('./online_gating_checkpoints/model/', setting, name)
                      for name in self.model_names]
         text_path = os.path.join('./online_gating_checkpoints/mlp/', setting)
-        mse_root = os.path.join('./online_gating_checkpoints/mogu_best_vali_mse/', setting)
-        mse_paths = [os.path.join(mse_root, name) for name in self.model_names]
-        mse_text_path = os.path.join(mse_root, 'mlp')
-        for p in num_paths + [text_path] + mse_paths + [mse_text_path]:
+        for p in num_paths + [text_path]:
             os.makedirs(p, exist_ok=True)
+        # With the nll objective, also keep the checkpoint GMM-TS's rule would pick (best
+        # gated validation MSE), so test() can report both. With mse, early stopping already
+        # selects exactly that checkpoint.
         self._best_vali_mse = float("inf")
-        # in mse mode the early-stopping checkpoint already is the best-gated-MSE one
-        self._mse_ckpt = None if self._mse_mode else (mse_paths, mse_text_path)
+        self._mse_ckpt = None
+        if not self._mse_mode:
+            mse_root = os.path.join('./online_gating_checkpoints/mogu_best_vali_mse/', setting)
+            self._mse_ckpt = ([os.path.join(mse_root, name) for name in self.model_names],
+                              os.path.join(mse_root, 'mlp'))
+            for p in self._mse_ckpt[0] + [self._mse_ckpt[1]]:
+                os.makedirs(p, exist_ok=True)
 
         early_stopping = [EarlyStopping(patience=self.args.patience, verbose=True)
                           for _ in self.num_units]
@@ -263,16 +269,16 @@ class Exp_Online_MoGU_Long_Term_Forecast(Exp_Online_Gating_Long_Term_Forecast):
             vali_loss, vali_mse = self._vali_both(vali_data, vali_loader)
             test_loss = self.vali(test_data, test_loader)
             print("\tgated vali MSE: {:.7f}".format(vali_mse))
-            # GMM-TS selects its checkpoint by the validation MSE of the gated forecast; keep that
-            # checkpoint too, so test() can report MoGU under both selection rules
-            if vali_mse < self._best_vali_mse:
+            if self._mse_ckpt is not None and vali_mse < self._best_vali_mse:
                 self._best_vali_mse = vali_mse
-                for unit, path in zip(self.num_units, mse_paths):
+                for unit, path in zip(self.num_units, self._mse_ckpt[0]):
                     torch.save(unit.state_dict(), os.path.join(path, 'checkpoint.pth'))
-                torch.save(self.text_unit.state_dict(), os.path.join(mse_text_path, 'checkpoint.pth'))
+                torch.save(self.text_unit.state_dict(),
+                           os.path.join(self._mse_ckpt[1], 'checkpoint.pth'))
             print("Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f} Test Loss: {4:.7f}"
-                  " (MoGU weighted Gaussian NLL)".format(
-                      epoch + 1, train_steps, train_loss, vali_loss, test_loss))
+                  " (losses: MoGU weighted NLL; early stopping on {5})".format(
+                      epoch + 1, train_steps, train_loss, vali_loss, test_loss,
+                      "gated vali MSE" if self._mse_mode else "vali NLL"))
             # MoGU stops on its own objective; --mogu_loss mse stops like GMM-TS, on gated MSE
             stop_on = vali_mse if self._mse_mode else vali_loss
             for es, unit, path in zip(early_stopping, self.num_units, num_paths):

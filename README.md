@@ -122,6 +122,72 @@ Benchmark results depend on the expert models, domain, and prediction horizon. U
 
 - Releases/Changelog: tracked via GitHub releases (see repository tags)
 
+# Fork additions (Ranykh/gmmts_lib, branch `mogu-gating`)
+
+This fork makes the public code reproduce the paper's Table 1 and adds the MoGU
+inverse-variance gate as a drop-in alternative to the learned gate. Expert models and
+data still come from MM-TSFlib at the pinned commit `e789ce78`.
+
+## Reproduce Table 1 and run MoGU: one command
+
+```bash
+export MM_TSFLIB_PATH=/path/to/MM-TSFlib    # at e789ce78; extract data/Environment/*.rar
+python scripts/repro/run_table1_matrix.py --gpus 0,1 --seeds 2021 2022 2023
+```
+
+Every arm uses this repository's code with Table 1's experts (PatchTST + GPT2) on identical
+data, splits, horizons and seeds. Each (arm, domain, horizon, seed) runs in its own folder
+under `runs/table1_matrix/`; re-running skips finished runs. The last step writes
+`table1_matrix.xlsx` / `_summary.csv` / `_runs.csv`: the paper's Table 1 next to ours
+(mean ± std over seeds), plus paired tests against GMM-TS and gate diagnostics.
+
+| arm | entry point | method |
+|---|---|---|
+| `unimodal` | `run.py --prompt_weight 0` | numeric expert alone (Table 1 "Unimodal") |
+| `timemmd` | `run.py --prompt_weight pw` | Time-MMD fusion; pw ∈ `--timemmd_pw`, chosen per domain on validation MSE |
+| `gmmts` | `run_online_gating.py --agg_type direct` | GMM-TS learned gate (Table 1 "GMM-TS") |
+| `mogu` | `run_online_gating.py --agg_type mogu` | MM-MoGU: MoGU's published loss |
+| `mogu_mse` | `... --agg_type mogu --mogu_loss mse` | inverse-variance gate on experts trained exactly as in GMM-TS |
+| `mogu_detached` (opt-in) | `... --mogu_detach_weights 1` | ablation: gate weights detached in MoGU's loss |
+
+Only GMM-TS: `--arms gmmts --seeds 2021`. Quick check: `--domains Economy --epochs 1`.
+
+## MoGU gate (`--agg_type mogu`)
+
+`w_e = (1/σ_e²) / Σ_j (1/σ_j²)` per horizon step over every numeric expert in `--model`
+plus the `--llm_model` expert. The gate has no parameters and needs no
+`all_experts_config.csv`. One uncertainty head per expert (MoGU's UncHead) is trained jointly
+with the experts; the LLM stays frozen.
+
+| flag | default | meaning |
+|---|---|---|
+| `--mogu_loss` | `nll` | `nll`: MoGU's loss `Σ_e w_e·NLL_e`; `mse`: GMM-TS's loss on the forecasts, NLL only for the heads |
+| `--unc_learning_rate` | `1e-2` | shared by all uncertainty heads |
+| `--unc_head_type` | `mlp` | `mlp` or `linear` (MoGU UncHead) |
+| `--max_grad_norm` | `0` | gradient clipping; 0 = off, as in MoGU |
+| `--mogu_detach_weights` | `0` | ablation, `nll` only |
+
+Code: `gmm_ts/gating/mogu.py` (torch-only: head, weights, losses, uncertainty split) and
+`gmm_ts/exp/exp_online_mogu_long_term_forecasting.py`, a subclass of the online GMM-TS
+experiment. Tests (CPU, no data needed): `python tests/test_mogu.py`.
+
+## Fixes to the upstream code
+
+With the public MM-TSFlib every model returns one tensor, not `(forecast, latent)`:
+- `exp_online_gating_long_term_forecasting.py`: `vali()`/`test()` unpacked without the
+  single-tensor fallback that `train()` has, so the online path crashed after epoch 1.
+- `exp_long_term_forecasting.py` (`run.py`): all six expert calls go through
+  `_forward_expert()`, which accepts both return types.
+- `exp_long_term_forecasting.py` `test()` applied the Time-MMD fusion twice, scoring
+  `(1-pw)²·numeric + pw(2-pw)·text` for `0 < pw < 1`. It now fuses once, as MM-TSFlib does; the
+  upstream score is still saved as `metrics_upstream_test.npy`.
+- `all_experts_config.csv` for the online path is written by
+  `scripts/repro/make_online_experts_config.py` (the README's route needs latents saved by
+  `run.py --save_gating_dataset`, which cannot run on the public models).
+
+Known deviation from the paper's setup: the public numeric experts expose no latent, so the
+learned gate sees each numeric expert's forecast in its place.
+
 # Contribution Guidelines
 
 - Start here: `CONTRIBUTING.md`
@@ -166,82 +232,3 @@ For questions and discussions, open a GitHub issue in this repository.
 # License
 
 This project is licensed under the Apache License 2.0 — see the [LICENSE](LICENSE) file for details.
-
-## Reproducing with the public MM-TSFlib (fork notes)
-
-Against MM-TSFlib at the pinned commit `e789ce78`, every expert model returns a single
-tensor rather than `(forecast, latent)`. Two consequences:
-
-- `run.py --save_gating_dataset 1` (the latent-saving prep step behind
-  `prepare_all_expert_config.py` and the offline path) stops on the first batch with
-  `ValueError: too many values to unpack` in `gmm_ts/exp/exp_long_term_forecasting.py`.
-- The online path trains, then stopped in `vali()`/`test()`, which unpacked without the
-  single-tensor fallback that `train()` already has. Those two sites now use the same fallback.
-
-For the online path the expert config only supplies each expert's `latent_dim`, which is fixed
-by the online loop (`pred_len` for numeric experts, `llm_dim/8` for the text expert), so it is
-written directly:
-
-```bash
-python scripts/repro/make_online_experts_config.py --out_file all_experts_config.csv
-CUDA_VISIBLE_DEVICES=0 bash scripts/repro/run_online_sweep.sh table1 direct Economy "2021"
-python scripts/repro/collect_online_results.py --runs_dir runs --out results_online.csv
-```
-
-`run_online_sweep.sh` runs all four horizons of one domain with the paper's settings
-(PatchTST + GPT2 by default, as in Table 1) and gives every seed its own working directory, because
-the online `setting` string omits the seed and would otherwise skip later seeds.
-With public MM-TSFlib the learned gate sees each numeric expert's forecast in place of a backbone
-latent; keep that in mind when comparing against the paper.
-
-## MoGU gate (`--agg_type mogu`, fork extension)
-
-Replaces the learned GatingNet with the MoGU inverse-variance gate over all experts (every
-numeric expert in `--model` plus the `--llm_model` expert):
-`w_e = (1/sigma_e^2) / sum_j (1/sigma_j^2)` per horizon step, trained with MoGU's loss
-`sum_e w_e * GaussianNLL(mu_e, sigma_e^2; y)`. Experts, text projection and one uncertainty head
-per expert are trained jointly; the LLM stays frozen. The gate has no parameters and needs no
-`all_experts_config.csv`.
-
-```bash
-TSFN=PatchTST,DLinear CUDA_VISIBLE_DEVICES=0 bash scripts/repro/run_online_sweep.sh mogu mogu Economy "2021 2022 2023"
-python tests/test_mogu.py   # CPU: checks the port against MoGU's reference formulas
-```
-
-- `gmm_ts/gating/mogu.py` -- uncertainty head, weights, loss, aleatoric/epistemic split (torch-only)
-- `gmm_ts/exp/exp_online_mogu_long_term_forecasting.py` -- online experiment with the MoGU gate
-- flags: `--unc_head_type mlp|linear`, `--unc_learning_rate` (default 1e-2, shared by all heads),
-  `--max_grad_norm` (default 0 = off, as in MoGU)
-- `test()` additionally saves `expert_pred`, `expert_sigma2`, `gate_weights`, `aleatoric`,
-  `epistemic`, `true_scaled` (.npy) and `expert_names.txt`, and prints each expert's own MSE and
-  mean gate weight.
-
-## Table 1 matrix: Unimodal, Time-MMD, GMM-TS and MM-MoGU in one command (fork extension)
-
-```bash
-python scripts/repro/run_table1_matrix.py --gpus 2,5 --seeds 2021 2022 2023
-```
-
-Runs every Table 1 domain and horizon for four arms from this repository, on identical data,
-splits and seeds (experts: PatchTST + GPT2, as in Table 1), then writes
-`runs/table1_matrix/table1_matrix{_summary.csv,_runs.csv,.xlsx}`:
-
-| arm | entry point | method |
-|---|---|---|
-| `unimodal` | `run.py --prompt_weight 0` | numeric expert alone |
-| `timemmd` | `run.py --prompt_weight pw` | Time-MMD fusion; one run per `--timemmd_pw`, pw picked per domain on validation MSE |
-| `gmmts` | `run_online_gating.py --agg_type direct` | GMM-TS learned gate |
-| `mogu` | `run_online_gating.py --agg_type mogu` | MM-MoGU inverse-variance gate |
-| `mogu_detached` (opt-in) | `... --mogu_detach_weights 1` | ablation: gate weights detached in the loss |
-| `mogu_mse` (opt-in) | `... --mogu_loss mse` | forecasts trained exactly as in GMM-TS (gated MSE + numeric experts' own MSE, weights detached), variance heads by NLL only, early stopping on gated validation MSE -- the gate is the only difference from `gmmts` |
-
-Each job runs in its own directory with `run.json` + `log.txt`; re-running the command skips
-finished jobs. Two fixes on the `run.py` path make Time-MMD usable here:
-- expert calls unpack through `_forward_expert()`, which accepts MM-TSFlib's single-tensor return;
-- `test()` applied the Time-MMD fusion twice (MM-TSFlib applies it once), so for `0 < pw < 1` it
-  scored `(1-pw)^2*numeric + pw*(2-pw)*text`. It now fuses once; the double-fused score is still
-  saved as `metrics_upstream_test.npy` for comparison with published numbers.
-
-Diagnostics saved per run: gate weights and per-expert forecasts for both gates (collapse
-check, gate vs best single expert), and for MoGU a second test score from the checkpoint with the
-best validation MSE of the gated forecast (`metrics_select_mse.npy`), GMM-TS's selection rule.
